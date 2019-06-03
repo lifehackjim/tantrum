@@ -96,7 +96,7 @@ class AttrUndefinedError(ModuleError):
 
 
 class AttrTypeError(ModuleError):
-    """Exception handler for type mismatch of a value being set on a defined attribute."""
+    """Exception handler for type mismatch on a defined attribute."""
 
     def __init__(self, obj, attr, value, be_type):
         """Constructor.

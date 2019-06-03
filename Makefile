@@ -15,11 +15,11 @@ pip_upgrade:
 
 flake:
 	pipenv run pip install --quiet --upgrade flake8
-	pipenv run flake8 --max-line-length 100 --max-complexity=10 tantrum
+	pipenv run flake8 --max-line-length 88 --max-complexity=10 .
 
 black:
 	pipenv run pip install --quiet --upgrade black
-	pipenv run black tantrum
+	pipenv run black .
 
 build:
 	$(MAKE) flake

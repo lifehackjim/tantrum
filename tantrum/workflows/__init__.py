@@ -383,7 +383,7 @@ class Sensor(Workflow):
 
         for param in self.params:
             if param.value in ["", None] and not allow_empty_params:
-                m = "Parameter key {p.key!r} value {p.value!r} is empty, definition: {d}"
+                m = "Parameter {p.key!r} value {p.value!r} is empty, definition: {d}"
                 m = m.format(p=param, d=self.params_defined.get(key, None))
                 raise exceptions.ModuleError(m)
 

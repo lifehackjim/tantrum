@@ -622,8 +622,9 @@ class SessionId(CommonMixin, AuthMethod):
             If :attr:`CommonMixin.expired` is True, can not login to get
             a new one with just a session.
 
-            If :attr:`CommonMixin.logged_in` is True, and :attr:`CommonMixin.last_used_secs`
-            is older than :attr:`CommonMixin.revalidate_after`,
+            If :attr:`CommonMixin.logged_in` is True, and
+            :attr:`CommonMixin.last_used_secs` is older than
+            :attr:`CommonMixin.revalidate_after`,
             :meth:`CommonMixin.validate` to re-validate token.
 
             If :meth:`CommonMixin.validate` fails validation, can not login

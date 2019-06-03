@@ -7,11 +7,14 @@ import tantrum_creds
 # disable requests warnings about SSL cert issues
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+
 # add a log that goes to STDERR for debug level and above
 tantrum.utils.logs.add_stderr(lvl="debug")
 
 # setup an HTTP client for communicating with the server
-http_client = tantrum.http_client.HttpClient(url=tantrum_creds.url, verify=False, lvl="debug")
+http_client = tantrum.http_client.HttpClient(
+    url=tantrum_creds.url, verify=False, lvl="debug"
+)
 
 # setup an authentication method that uses an http client to send auth requests
 auth_method = tantrum.auth_methods.Credentials(

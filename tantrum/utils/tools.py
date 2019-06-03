@@ -52,7 +52,8 @@ def get_storage_dir(path=None, path_sub="", mkdir=False):
 
             If None, will use OS environment variable "TANTRUM_STORAGE_PATH" if set.
 
-            If None and "TANTRUM_STORAGE_PATH" is not set, will use :data:`STORAGE_PATH`.
+            If None and "TANTRUM_STORAGE_PATH" is not set,
+            will use :data:`STORAGE_PATH`.
 
             Defaults to: None.
         path_sub (:obj:`str` or :obj:`pathlib.Path`, optional):
