@@ -1,0 +1,3 @@
+requests[security,socks]
+six>=1.12.0
+xmltodict

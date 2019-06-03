@@ -24,6 +24,8 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+cov_html/
+junit-report.xml
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -102,3 +104,5 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+.DS_Store
