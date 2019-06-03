@@ -48,7 +48,7 @@ class MethodError(ModuleError):
 
         if response is not None:
             msgs += [
-                "Response body: {r}".format(r=response.clean_body),
+                "Response body: {r}".format(r=response.text),
                 "Request URL: {r!r}".format(r=response.url),
                 "Request method: {r!r}".format(r=response.request.method),
                 "Response status code: {r!r}".format(r=response.status_code),
