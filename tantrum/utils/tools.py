@@ -315,3 +315,33 @@ class Timer(object):
 
         """
         return self.elapsed_delta
+
+
+def calc_percent(part, whole):
+    """Utility method for getting percentage of part out of whole
+
+    Args:
+        part (:obj:`int` or :obj:`float`)
+        whole (:obj:`int` or :obj:`float`)
+
+    Returns:
+        :obj:`float`
+
+    """
+    if 0 in [part, whole]:
+        return float(0)
+    return 100 * (float(part) / float(whole))
+
+
+def calc_percent_of(percent, whole):
+    """Utility method for getting percentage of whole
+
+    Args:
+        percent (:obj:`int` or :obj:`float`)
+        whole (:obj:`int` or :obj:`float`)
+
+    Returns:
+        :obj:`float`
+
+    """
+    return (percent * whole) / 100.0
