@@ -5,14 +5,16 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import datetime
 import json
+import time
 
 from collections import OrderedDict
 
 from . import exceptions
 from .. import utils
 
-FILTER_MAP = {
+OPERATOR_MAP = {
     "less": {"op": "Less", "tmpl": "{value}"},
     "lessequal": {"op": "LessEqual", "tmpl": "{value}"},
     "greater": {"op": "Greater", "tmpl": "{value}"},
@@ -51,6 +53,56 @@ TYPE_MAP = {
     "RegexMatch": 11,
     "LastOperatorType": 12,
 }
+
+PCT_FMT = "{0:.0f}%".format
+
+
+def get_operator_map(operator):
+    if operator in OPERATOR_MAP:
+        return OPERATOR_MAP[operator]
+    m = "Operator {o!r} is invalid, must be one of {vo}"
+    m = m.format(o=operator, vo=list(OPERATOR_MAP.keys()))
+    raise exceptions.ModuleError(m)
+
+
+def get_type_map(type):
+    if type in TYPE_MAP:
+        return TYPE_MAP[type]
+    m = "Type {o!r} is invalid, must be one of {vo}"
+    m = m.format(o=type, vo=list(TYPE_MAP.keys()))
+    raise exceptions.ModuleError(m)
+
+
+def calc_percent(part, whole):
+    """Utility method for getting percentage of part out of whole
+
+    Parameters
+    ----------
+    part: int, float
+    whole: int, float
+
+    Returns
+    -------
+    int : the percentage of part out of whole
+    """
+    if 0 in [part, whole]:
+        return float(0)
+    return 100 * (float(part) / float(whole))
+
+
+def calc_percent_of(percent, whole):
+    """Utility method for getting percentage of whole
+
+    Parameters
+    ----------
+    percent: int, float
+    whole: int, float
+
+    Returns
+    -------
+    int : the percentage of whole
+    """
+    return int((percent * whole) / 100.0)
 
 
 class Workflow(object):
@@ -91,11 +143,83 @@ class Clients(Workflow):
         cls = ctmpl(c=self.__class__)
         return "{cls}{bits}".format(cls=cls, bits=bits)
 
+    @staticmethod
+    def build_last_reg_filter(
+        adapter, last_reg=300, operator="greaterequal", not_flag=False, filters=None
+    ):
+        op_dict = get_operator_map(operator)
+        now_dt = datetime.datetime.utcnow()
+        ago_td = datetime.timedelta(seconds=-(int(last_reg)))
+        ago_dt = now_dt + ago_td
+        ago_str = ago_dt.strftime(adapter.api_objects.module_dt)
+        cfilter = adapter.api_objects.CacheFilter(
+            field="last_registration",
+            type="Date",
+            operator=op_dict["op"],
+            not_flag=not_flag,
+            value=ago_str,
+        )
+        filters = filters or adapter.api_objects.CacheFilterList()
+        filters.append(cfilter)
+        return filters
+
     @classmethod
-    def get_all(cls, adapter, lvl="info"):
+    def get_all(
+        cls,
+        adapter,
+        filters=None,
+        sort_fields="last_registration",
+        cache_paging=1,
+        cache_expiration=600,
+        lvl="info",
+    ):
         """Pass."""
-        result = adapter.cmd_get(obj=adapter.api_objects.ClientStatus())
-        return cls(adapter=adapter, obj=result(), lvl=lvl, result=result)
+        log = utils.logs.get_obj_log(obj=cls, lvl=lvl)
+        find_obj = adapter.api_objects.ClientStatus()
+        get_args = {"cache_sort_fields": sort_fields}
+        if filters is not None:
+            get_args["cache_filters"] = filters
+        if cache_paging:
+            get_args["row_start"] = 0
+            get_args["row_count"] = cache_paging
+            get_args["cache_expiration"] = cache_expiration
+        result = adapter.cmd_get(obj=find_obj, **get_args)
+        log.debug(result.http_response(http_client=adapter.http_client))
+        result_obj = result()
+
+        m = "Received initial {o!r} length={len}, cache_info={cache!r}"
+        m = m.format(
+            o=result_obj.__class__.__name__,
+            len=len(result_obj),
+            cache=getattr(result_obj, "cache_info", None),
+        )
+        log.info(m)
+        if cache_paging:
+            total_rows = result_obj.cache_info.filtered_row_count
+            paging_get_args = {k: v for k, v in get_args.items()}
+            while len(result_obj) < total_rows:
+                paging_get_args["row_start"] += cache_paging
+                paging_result = adapter.cmd_get(obj=find_obj, **paging_get_args)
+                log.debug(paging_result.http_response(http_client=adapter.http_client))
+                paging_result_obj = paging_result()
+
+                m = "Received page of {o!r} length={len}, cache_info={cache!r}"
+                m = m.format(
+                    o=paging_result_obj.__class__.__name__,
+                    len=len(paging_result_obj),
+                    cache=getattr(paging_result_obj, "cache_info", None),
+                )
+                log.info(m)
+
+                result_obj += paging_result_obj
+                m = "{o!r} received so far {len} out of total {total}"
+                m = m.format(
+                    o=result_obj.__class__.__name__,
+                    len=len(result_obj),
+                    total=total_rows,
+                )
+                log.info(m)
+        return cls(adapter=adapter, obj=result_obj, lvl=lvl, result=result)
 
 
 class Question(Workflow):
@@ -107,11 +231,10 @@ class Question(Workflow):
 
         """
         ctmpl = "{c.__module__}.{c.__name__}".format
-        bits = [
-            "left={}".format(len(self.left)),
-            "id={}".format(self.obj.id),
-            "text={}".format(self.obj.query_text),
-        ]
+        atmpl = "{k}='{v}'".format
+        attrs = ["id", "query_text"]
+        bits = [atmpl(k=attr, v=getattr(self.obj, attr, None)) for attr in attrs]
+        bits += [atmpl(k=k, v=v) for k, v in self.expiration.items()]
         bits = "(\n  {},\n)".format(",\n  ".join(bits))
         cls = ctmpl(c=self.__class__)
         return "{cls}{bits}".format(cls=cls, bits=bits)
@@ -131,6 +254,27 @@ class Question(Workflow):
             m = "No ID issued yet, ask the question!"
             raise exceptions.ModuleError(m)
 
+    @property
+    def expiration(self):
+        now_dt = datetime.datetime.utcnow()
+        now_td = datetime.timedelta()
+        ret = {
+            "expiration": now_dt,
+            "expire_in": now_td,
+            "expire_ago": now_td,
+            "expired": True,
+        }
+        if self.obj.expiration:
+            ex_dt = self.api_objects.module_dt_format(self.obj.expiration)
+            is_ex = now_dt >= ex_dt
+            ret["expiration"] = ex_dt
+            ret["expired"] = is_ex
+            if is_ex:
+                ret["expire_ago"] = now_dt - ex_dt
+            else:
+                ret["expire_in"] = ex_dt - now_dt
+        return ret
+
     def refetch(self):
         self._check_id()
         result = self.adapter.cmd_get(obj=self.obj)
@@ -138,31 +282,125 @@ class Question(Workflow):
         self.obj = result()
         return self
 
-    def result_info(self):
+    def answers_info(self):
         self._check_id()
         result = self.adapter.cmd_get_result_info(obj=self.obj)
+        info = result()
         self._last_result = result
-        self._last_result_info = result()
-        return self._last_result_info
+        self._last_info = info
+        return info
 
-    def result_data(self):
+    def answers(self):
         self._check_id()
         result = self.adapter.cmd_get_result_data(obj=self.obj)
+        data = result()
         self._last_result = result
-        self._last_result_data = result()
-        return self._last_result_data
+        self._last_data = data
+        return data
+
+    def answers_paged(self, size=1):  # float= %, int = #
+        return NotImplementedError
+
+    def answers_sse(self):
+        return NotImplementedError
+
+    def answers_poll(self, sleep=5, pct=99, secs=0, answered=0, passed=0):
+        """Poll for answers for this question.
+
+        Args:
+            sleep (:obj:`int`, optional):
+                Check for answers every N seconds.
+
+                Defaults to: 5.
+            pct (:obj:`int`, optional):
+                Wait until the percentage of clients answered is N percent.
+
+                Defaults to: 99.
+            secs (:obj:`int`, optional):
+                If not 0, wait until N seconds for pct of clients answered instead of
+                until question expiration.
+
+                Defaults to: 0.
+            answered (:obj:`int`, optional):
+                If not 0, wait until N clients have answered instead of
+                ``estimated_total`` of clients from API.
+
+                Defaults to: 0.
+            passed (:obj:`int`, optional):
+                If not 0, wait until N clients have passed the right hand
+                side of the question.
+
+                Defaults to: 0.
+
+        """
+        self._check_id()
+        start = datetime.datetime.utcnow()
+        if secs:
+            stop_dt = start + datetime.timedelta(seconds=secs)
+        else:
+            stop_dt = self.expiration["expiration"]
+
+        m = "Will poll for answers for {o} until {stop_dt}"
+        m = m.format(o=self, stop_dt=stop_dt)
+        self.log.debug(m)
+
+        while True:
+            m = "New polling loop for {o}"
+            m = m.format(o=self)
+            self.log.debug(m)
+
+            infos = self.answers_info()
+
+            m = "Received answers info: {}"
+            m = m.format(infos.serialize())
+            self.log.debug(m)
+
+            info = infos[0]
+
+            # if answered and
+            stop_count = secs or info.estimated_total
+            answers_pct = calc_percent(part=info.mr_passed, whole=stop_count)
+
+            m = (
+                "Answers received {answers_pct} ({info.mr_passed} out of {stop_count}) "
+                "(estimated_total: {info.estimated_total})"
+            )
+            m = m.format(
+                answers_pct=PCT_FMT(answers_pct), info=info, stop_count=stop_count
+            )
+            self.log.debug(m)
+
+            if answers_pct >= pct:
+                m = "Reached {answers_pct} "
+            if datetime.datetime.utcnow() >= stop_dt:
+
+                m = "Reached stop_dt {stop_dt}, considering all answers in"
+                m = m.format(stop_dt=stop_dt)
+                self.log.debug(m)
+
+                return infos
+
+            if self.expiration["expired"]:
+
+                m = "Reached expiration {expiration}, considering all answers in"
+                m = m.format(expiration=self.expiration)
+                self.log.debug(m)
+
+                return infos
+
+            time.sleep(sleep)
+        return NotImplementedError
 
     def ask(self):
+        if self.obj.id:
+            wipe_attrs = ["id", "context_group", "management_rights_group"]
+            for attr in wipe_attrs:
+                setattr(self.obj, attr, None)
         result = self.adapter.cmd_add(obj=self.obj)
+        self._last_result = result
         self.obj = result()
         self.refetch()
         return self
-
-    @property
-    def left(self):
-        if not getattr(self.obj, "selects", None):
-            self.obj.selects = self.api_objects.SelectList()
-        return self.obj.selects
 
     def add_left_sensor(
         self, sensor, set_param_defaults=True, allow_empty_params=False
@@ -177,7 +415,9 @@ class Question(Workflow):
         select = sensor.build_select(
             set_param_defaults=set_param_defaults, allow_empty_params=allow_empty_params
         )
-        self.left.append(select)
+        if not getattr(self.obj, "selects", None):
+            self.obj.selects = self.api_objects.SelectList()
+        self.obj.selects.append(select)
 
 
 class Sensor(Workflow):
@@ -318,7 +558,7 @@ class Sensor(Workflow):
         not_flag=False,
         all_values_flag=False,
         max_age_seconds=0,
-        value_type=None,
+        type=None,
     ):
         """Set a filter for this sensor to be used in a question.
 
@@ -327,7 +567,7 @@ class Sensor(Workflow):
                 Filter sensor rows returned on this value.
             operator (:obj:`str`, optional):
                 Operator to use for filter_value.
-                Must be one of :data:`FILTER_MAP`.
+                Must be one of :data:`OPERATOR_MAP`.
 
                 Defaults to: "regex".
             ignore_case_flag (:obj:`bool`, optional):
@@ -347,30 +587,24 @@ class Sensor(Workflow):
                 Have filter match all values instead of any value.
 
                 Defaults to: False.
-            value_type (:obj:`str`, optional):
+            type (:obj:`str`, optional):
                 Have filter consider the value type as this.
                 Must be one of :data:`TYPE_MAP`
 
                 Defaults to: None.
 
         """
-        if operator not in FILTER_MAP:
-            m = "Operator {o!r} must be one of {vo}"
-            m = m.format(o=operator, vo=FILTER_MAP.keys())
-            raise exceptions.ModuleError(m)
+        op_dict = get_operator_map(operator)
+        if type:
+            get_type_map(type)
 
-        if value_type not in TYPE_MAP:
-            m = "Value type {o!r} must be one of {vo}"
-            m = m.format(o=value_type, vo=TYPE_MAP.keys())
-            raise exceptions.ModuleError(m)
-
-        self.filter.value = FILTER_MAP[operator]["tmpl"].format(value=value)
-        self.filter.operator = FILTER_MAP[operator]["op"]
+        self.filter.value = op_dict["tmpl"].format(value=value)
+        self.filter.operator = op_dict["op"]
         self.filter.ignore_case_flag = ignore_case_flag
         self.filter.not_flag = not_flag
         self.filter.all_values_flag = all_values_flag
         self.filter.max_age_seconds = max_age_seconds
-        self.filter.value_type = value_type
+        self.filter.value_type = type
 
     def build_select(self, set_param_defaults=True, allow_empty_params=False):
         select = self.api_objects.Select()
