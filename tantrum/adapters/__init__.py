@@ -227,7 +227,7 @@ class Adapter(object):
 class Soap(Adapter):
     """Tanium SOAP request adapter."""
 
-    DEFAULT_OPTIONS = {"json_pretty_print": True, "include_hashes_flag": True}
+    DEFAULT_OPTIONS = {}
     """:obj:`dict`: Default options to use in :meth:`build_options_from_kwargs`."""
 
     AUDIT_LOG_TYPES = [
