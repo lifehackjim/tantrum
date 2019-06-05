@@ -383,6 +383,7 @@ class Question(Workflow):
         Notes:
             This will not use any paging, which means ALL answers will be returned.
             For large data sets of answers, this is unwise.
+
         """
         self._check_id()
         result = self.adapter.cmd_get_result_data(obj=self.obj)
@@ -678,6 +679,7 @@ class Sensor(Workflow):
                 Throws exception if False and key not in :attr:`Sensor.param_keys`.
 
                 Defaults to: True.
+
         """
         param_def = self.params_defined.get(key, None)
         if param_def is None:
