@@ -169,7 +169,7 @@ class Clients(Workflow):
         adapter,
         filters=None,
         sort_fields="last_registration",
-        cache_paging=1,
+        cache_paging=1000,
         cache_expiration=600,
         lvl="info",
     ):
