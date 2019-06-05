@@ -6,7 +6,6 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import abc
-
 import re
 import six
 
@@ -800,6 +799,66 @@ class Soap(Result):
         m = "Finished deserializing {src} into {t}, {size} took {e}"
         m = m.format(size=len(text), src=src, t=type(ret), e=t.elapsed)
         self.log.debug(m)
+        return ret
+
+    def pretty_xml(self, obj, **kwargs):
+        """Re-parse an XML string into a pretty XML string.
+
+        Args:
+            obj (:obj:`object`):
+                Python object to encode into a string.
+            **kwargs:
+                pretty (:obj:`bool`):
+                    Indent the output doc.
+
+                    Defaults to: True.
+                rest of kwargs:
+                    Passed to xmltodict.unparse.
+
+        Returns:
+            :obj:`str`
+
+        """
+        kwargs.setdefault("pretty", True)
+        return xmltodict.unparse(xmltodict.parse(obj), **kwargs)
+
+    def http_response(self, http_client, as_str=True):
+        """Return pretty XML of last response and request body from http_client.
+
+        Args:
+            http_client (:obj:`tantrum.http_client.HttpClient`):
+                HTTP Client to get last_response attribute from
+            as_str (:obj:`bool`, optional):
+                Return pretty XML as a string instead of a dict.
+
+                Defaults to: True.
+
+        Returns:
+            :obj:`dict` or :obj:`str`
+
+        """
+        last_response = http_client.last_response
+        ret = {"response": last_response.text, "request": last_response.request.body}
+        try:
+            ret["response"] = self.pretty_xml(last_response.text)
+        except Exception as exc:
+            ret["response_exc"] = exc
+        try:
+            ret["request"] = self.pretty_xml(last_response.request.body)
+        except Exception as exc:
+            ret["request_exc"] = exc
+        if as_str:
+            ret_list = [
+                "",
+                "<!-- Request Body -->",
+                "",
+                ret["request"],
+                "",
+                "<!-- Response Body -->",
+                "",
+                ret["response"],
+            ]
+            ret = "\n".join(ret_list)
         return ret
 
 
