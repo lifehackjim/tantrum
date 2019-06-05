@@ -5,6 +5,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import inspect
 import logging
 import logging.handlers
 import time
@@ -134,7 +135,7 @@ def get_obj_log(obj, lvl="debug"):
         :obj:`logging.Logger`
 
     """
-    cls = obj.__class__
+    cls = obj if inspect.isclass(obj) else obj.__class__
     name = "{}.{}".format(cls.__module__, cls.__name__)
     return get_log(name=name, lvl=lvl)
 
