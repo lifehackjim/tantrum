@@ -127,7 +127,20 @@ class Soap(ApiClient):
         """
         return self.__str__()
 
-    def __call__(self, data, timeout=30, **kwargs):
+    def __call__(
+        self,
+        data,
+        path="/soap",
+        method="post",
+        timeout=30,
+        headers=None,
+        verify=None,
+        save_last=None,
+        save_history=None,
+        log_request=None,
+        log_response=None,
+        cause="",
+    ):
         """Get response of POST of data to /soap and return a response object.
 
         Args:
@@ -137,29 +150,61 @@ class Soap(ApiClient):
                 Response timeout.
 
                 Defaults to: 30.
-            **kwargs:
-                cause (:obj:`str`):
-                    String to explain purpose of request.
+            headers (:obj:`dict`):
+                Headers to send in request.
 
-                    Defaults to: "".
-                headers (:obj:`dict`):
-                    Headers to send in request.
+                Defaults to: None.
+            verify (:obj:`bool` or :obj:`str`, optional):
+                Enable SSL certification validation.
+                If None uses :attr:`tantrum.http_client.HttpClient.verify`.
 
-                    Defaults to: {}.
+                Defaults to: None.
+            save_last (:obj:`bool`, optional):
+                Save last request to :attr:`HttpClient.last_request` and last response
+                to :attr:`HttpClient.last_response`.
+                If None uses :attr:`tantrum.http_client.HttpClient.save_last`.
+
+                Defaults to: None.
+            save_history (:obj:`bool`, optional):
+                Append last response to :attr:`HttpClient.history`.
+                If None uses :attr:`tantrum.http_client.HttpClient.save_history`.
+
+                Defaults to: None.
+            log_request (:obj:`bool`, optional):
+                Log request details to debug level.
+                If None uses :attr:`tantrum.http_client.HttpClient.log_request`.
+
+                Defaults to: None.
+            log_response (:obj:`bool`, optional):
+                Log response details to debug level.
+                If None uses :attr:`tantrum.http_client.HttpClient.log_response`.
+
+                Defaults to: None.
+            cause (:obj:`str`, optional):
+                String to explain purpose of request.
+
+                Defaults to: "".
+
 
         Returns:
             :obj:`requests.Response`
 
         """
-        headers = kwargs.pop("headers", {}) or {}
+        headers = headers or {}
+        headers = {k: v for k, v in headers.items()}
         headers.update(self.auth_method.token_headers)
         r = self.http_client(
-            method="post",
-            path="/soap",
+            method=method,
+            path=path,
             data=data,
             headers=headers,
             timeout=timeout,
-            cause=kwargs.pop("cause", ""),
+            verify=verify,
+            save_last=save_last,
+            save_history=save_history,
+            log_request=log_request,
+            log_response=log_response,
+            cause=cause,
         )
         return r
 
