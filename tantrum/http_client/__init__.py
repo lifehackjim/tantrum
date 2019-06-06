@@ -15,7 +15,17 @@ from .. import version
 class HttpClient(object):
     """Convenience class for requests package."""
 
-    def __init__(self, url, verify=True, timeout=5, lvl="info"):
+    def __init__(
+        self,
+        url,
+        verify=True,
+        timeout=5,
+        save_last=False,
+        save_history=False,
+        log_request=False,
+        log_response=False,
+        lvl="info",
+    ):
         """Constructor.
 
         Args:
@@ -34,6 +44,23 @@ class HttpClient(object):
                 or a path to custom cert.
 
                 Defaults to: True.
+            save_last (:obj:`bool`, optional):
+                Save last request to :attr:`HttpClient.last_request` and last response
+                to :attr:`HttpClient.last_response`.
+
+                Defaults to: False.
+            save_history (:obj:`bool`, optional):
+                Append last response to :attr:`HttpClient.history`.
+
+                Defaults to: False.
+            log_request (:obj:`bool`, optional):
+                Log request details to debug level.
+
+                Defaults to: False.
+            log_response (:obj:`bool`, optional):
+                Log response details to debug level.
+
+                Defaults to: False.
 
         Notes:
             If verify is True or None, verification is done using default/built in
@@ -63,13 +90,17 @@ class HttpClient(object):
         self.last_response = None
         """:obj:`requests.Response`: Last response received."""
         self.history = []
-        """:obj:`list`: History of all responses received.
-
-        Used by :meth:`HttpClient.response_hook_history`.
-        """
+        """:obj:`list`: History of all responses received."""
         self.verify = verify
         """:obj:`bool`: SSL Verification."""
-
+        self.save_last = save_last
+        """:obj:`bool`: Save requests/responses to last_request/last_response."""
+        self.save_history = save_history
+        """:obj:`bool`: Append requests/responses to history."""
+        self.log_request = log_request
+        """:obj:`bool`: Log requests."""
+        self.log_response = log_response
+        """:obj:`bool`: Log responses."""
         self.session = requests.Session()
         """:obj:`requests.Session`: Requests session object."""
 
@@ -113,7 +144,12 @@ class HttpClient(object):
         params=None,
         headers=None,
         b64_headers=None,
-        **kwargs
+        verify=None,
+        save_last=None,
+        save_history=None,
+        log_request=None,
+        log_response=None,
+        cause="",
     ):
         """Create, prepare a request, and then send it.
 
@@ -146,8 +182,34 @@ class HttpClient(object):
                 Headers to base 64 encode.
 
                 Defaults to: None.
-            **kwargs:
-                cause (:obj:`str`): String to explain purpose of request.
+            verify (:obj:`bool` or :obj:`str`, optional):
+                Enable SSL certification validation.
+                If None uses :attr:`HttpClient.verify`.
+
+                Defaults to: None.
+            save_last (:obj:`bool`, optional):
+                Save last request to :attr:`HttpClient.last_request` and last response
+                to :attr:`HttpClient.last_response`.
+                If None uses :attr:`HttpClient.save_last`.
+
+                Defaults to: None.
+            save_history (:obj:`bool`, optional):
+                Append last response to :attr:`HttpClient.history`.
+                If None uses :attr:`HttpClient.save_history`.
+
+                Defaults to: None.
+            log_request (:obj:`bool`, optional):
+                Log request details to debug level.
+                If None uses :attr:`HttpClient.log_request`.
+
+                Defaults to: None.
+            log_response (:obj:`bool`, optional):
+                Log response details to debug level.
+                If None uses :attr:`HttpClient.log_response`.
+
+                Defaults to: None.
+            cause (:obj:`str`, optional):
+                String to explain purpose of request.
 
                 Defaults to: "".
 
@@ -155,12 +217,18 @@ class HttpClient(object):
             :obj:`requests.Response`
 
         """
-        cause = kwargs.pop("cause", "")
-        verify = kwargs.pop("verify", self.verify)
         b64 = b64_headers or []
+        headers = headers or {}
+        headers = {k: v for k, v in headers.items()}
+
+        verify = utils.tools.def_none(verify, self.verify)
+        save_last = utils.tools.def_none(save_last, self.save_last)
+        save_history = utils.tools.def_none(save_history, self.save_history)
+        log_request = utils.tools.def_none(log_request, self.log_request)
+        log_response = utils.tools.def_none(log_response, self.log_response)
 
         h = {}
-        h.update(headers or {})
+        h.update(headers)
         h.setdefault("User-Agent", self.user_agent)
         h.update({k: utils.tools.b64_encode(v) for k, v in h.items() if k in b64})
 
@@ -170,6 +238,20 @@ class HttpClient(object):
         req_args["data"] = data
         req_args["headers"] = h
         req_args["params"] = params
+
+        request = requests.Request(**req_args)
+
+        prequest = self.session.prepare_request(request=request)
+        prequest.cause = cause
+
+        if save_last:
+            self.last_request = prequest
+
+        if log_request:
+            m = ["request sent: url={p.url!r}", "method={p.method!r}", "size={size}"]
+            m = ", ".join(m)
+            m = m.format(p=prequest, size=len(prequest.body or ""))
+            self.log.debug(m)
 
         send_args = {}
         send_args["timeout"] = (self.timeout, timeout)
@@ -183,88 +265,31 @@ class HttpClient(object):
             )
         )
 
-        request = requests.Request(**req_args)
-        prequest = self.last_request = self.session.prepare_request(request=request)
-        prequest.cause = cause
-
-        m = "sent: url={p.url!r}, method={p.method!r}, size={size}"
-        m = m.format(p=prequest, size=len(prequest.body or ""))
-        self.log.debug(m)
-
-        r = self.last_response = self.session.send(prequest, **send_args)
+        r = self.session.send(prequest, **send_args)
         r.cause = cause
+
+        if save_last:
+            self.last_response = r
+
+        if save_history:
+            self.history = getattr(self, "history", [])
+            self.history.append(r)
+
+        if log_response:
+            m = [
+                "response received: url={r.url!r}",
+                "method={r.request.method!r}",
+                "size={size}",
+                "status={r.status_code!r}",
+                "reason={r.reason!r}",
+                "elapsed={r.elapsed}",
+                "cause={r.cause!r}",
+            ]
+            m = ", ".join(m)
+            m = m.format(r=r, size=len(r.text or ""))
+            self.log.debug(m)
+
         return r
-
-    def control_hook(self, enable, hook):
-        """Add or remove a hook from :attr:`HttpClient.session`.
-
-        Args:
-            enable (:obj:`bool`):
-                True: Add hook to session.
-                False: Remove hook from session.
-            hook (:obj:`object`):
-                Hook function to add/remove to session.
-
-        Returns:
-            :obj:`bool`:
-                True/False if hook was actually removed/added.
-
-        """
-        ret = False
-        self.session.hooks = getattr(self.session, "hooks", {}) or {}
-        self.session.hooks["response"] = self.session.hooks.get("response", [])
-        if enable:
-            if hook not in self.session.hooks["response"]:
-                self.session.hooks["response"].append(hook)
-                ret = True
-        else:
-            if hook in self.session.hooks["response"]:
-                self.session.hooks["response"].remove(hook)
-                ret = True
-        return ret
-
-    def response_hook_log_debug(self, response, *args, **kwargs):
-        """Response hook to log info.
-
-        Args:
-            response (:obj:`requests.Response`):
-                Response to process.
-            *args:
-                Unused, yet supplied by :obj:`requests.Session`.
-            **kwargs:
-                Unused, yet supplied by :obj:`requests.Session`.
-
-        Returns:
-            :obj:`requests.Response`
-
-        """
-        m = (
-            "rcvd: url={response.url!r}, method={request.method!r}, size={size}, "
-            "status={response.status_code!r}, reason={response.reason!r}, "
-            "elapsed={response.elapsed}, cause={cause!r}"
-        )
-        m = m.format(
-            response=response,
-            request=response.request,
-            size=len(response.text or ""),
-            cause=getattr(response, "cause", ""),
-        )
-        self.log.debug(m)
-        return response
-
-    def response_hook_history(self, response, *args, **kwargs):
-        """Response hook to add response to :attr:`HttpClient.history`.
-
-        Args:
-            response (:obj:`requests.Response`):
-                Response to process.
-            *args:
-                Unused, yet supplied by :obj:`requests.Session`.
-            **kwargs:
-                Unused, yet supplied by :obj:`requests.Session`.
-        """
-        self.history = getattr(self, "history", [])
-        self.history.append(response)
 
     def parse_url(self, url):
         """Parse a URL using UrlParser.
