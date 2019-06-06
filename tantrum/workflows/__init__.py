@@ -13,66 +13,7 @@ from collections import OrderedDict
 
 from . import exceptions
 from .. import utils
-
-OPERATOR_MAP = {
-    "less": {"op": "Less", "tmpl": "{value}"},
-    "lessequal": {"op": "LessEqual", "tmpl": "{value}"},
-    "greater": {"op": "Greater", "tmpl": "{value}"},
-    "greaterequal": {"op": "GreaterEqual", "tmpl": "{value}"},
-    "equal": {"op": "Equal", "tmpl": "{value}"},
-    "regex": {"op": "RegexMatch", "tmpl": "{value}"},
-    "startswith": {"op": "RegexMatch", "tmpl": ".*{value}"},
-    "endswith": {"op": "RegexMatch", "tmpl": "{value}.*"},
-    "contains": {"op": "RegexMatch", "tmpl": ".*{value}.*"},
-    "hash": {"op": "HashMatch", "tmpl": "{value}"},
-}
-
-
-TYPE_MAP = {
-    "Hash": 0,
-    # SENSOR_RESULT_TYPE_STRING
-    "String": 1,
-    # SENSOR_RESULT_TYPE_VERSION
-    "Version": 2,
-    # SENSOR_RESULT_TYPE_NUMERIC
-    "NumericDecimal": 3,
-    # SENSOR_RESULT_TYPE_DATE_BES
-    "BESDate": 4,
-    # SENSOR_RESULT_TYPE_IPADDRESS
-    "IPAddress": 5,
-    # SENSOR_RESULT_TYPE_DATE_WMI
-    "WMIDate": 6,
-    #  e.g. "2 years, 3 months, 18 days, 4 hours, 22 minutes:
-    # 'TimeDiff', and 3.67 seconds" or "4.2 hours"
-    # (numeric + "Y|MO|W|D|H|M|S" units)
-    "TimeDiff": 7,
-    #  e.g. 125MB or 23K or 34.2Gig (numeric + B|K|M|G|T units)
-    "DataSize": 8,
-    "NumericInteger": 9,
-    "VariousDate": 10,
-    "RegexMatch": 11,
-    "LastOperatorType": 12,
-}
-
-PCT_FMT = "{0:.0f}%".format
-
-
-def get_operator_map(operator):
-    """Validate operator against :data:`OPERATOR_MAP`."""
-    if operator in OPERATOR_MAP:
-        return OPERATOR_MAP[operator]
-    m = "Operator {o!r} is invalid, must be one of {vo}"
-    m = m.format(o=operator, vo=list(OPERATOR_MAP.keys()))
-    raise exceptions.ModuleError(m)
-
-
-def get_type_map(type):
-    """Validate type against :data:`TYPE_MAP`."""
-    if type in TYPE_MAP:
-        return TYPE_MAP[type]
-    m = "Type {o!r} is invalid, must be one of {vo}"
-    m = m.format(o=type, vo=list(TYPE_MAP.keys()))
-    raise exceptions.ModuleError(m)
+from .. import results
 
 
 class Workflow(object):
@@ -186,9 +127,10 @@ class Clients(Workflow):
         adapter,
         filters=None,
         sort_fields="last_registration",
-        cache_paging=1000,
+        paging=1000,
         cache_expiration=600,
         lvl="info",
+        **kwargs
     ):
         """Get all Clients.
 
@@ -204,13 +146,13 @@ class Clients(Workflow):
                 Attribute of a ClientStatus object to have API sort the return on.
 
                 Defaults to: "last_registration".
-            cache_paging (:obj:`int`, optional):
+            paging (:obj:`int`, optional):
                 Get N number of clients at a time from the API.
                 If set to 0, disables paging and gets all clients in one call.
 
                 Defaults to: 1000.
             cache_expiration (:obj:`int`, optional):
-                When cache_paging is not 0, have the API keep the cache of clients
+                When paging is not 0, have the API keep the cache of clients
                 for this many seconds before expiring the cache.
 
                 Defaults to: 600.
@@ -218,22 +160,36 @@ class Clients(Workflow):
                 Logging level.
 
                 Defaults to: "info".
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_get`.
 
         Returns:
             :obj:`Clients`
 
         """
         log = utils.logs.get_obj_log(obj=cls, lvl=lvl)
-        find_obj = adapter.api_objects.ClientStatus()
-        get_args = {"cache_sort_fields": sort_fields}
+
+        get_args = {}
+        get_args.update(kwargs)
+        get_args["cache_sort_fields"] = sort_fields
+        get_args["obj"] = adapter.api_objects.ClientStatus()
+
+        row_start = 0
+        row_count = paging
+
         if filters is not None:
             get_args["cache_filters"] = filters
-        if cache_paging:
-            get_args["row_start"] = 0
-            get_args["row_count"] = cache_paging
+
+        if paging:
+            get_args["row_start"] = row_start
+            get_args["row_count"] = row_count
             get_args["cache_expiration"] = cache_expiration
-        result = adapter.cmd_get(obj=find_obj, **get_args)
-        log.debug(result.http_response(http_client=adapter.http_client))
+
+        result = adapter.cmd_get(**get_args)
+
+        log.debug(result.pretty_bodies())
+
         result_obj = result()
 
         m = "Received initial {o!r} length={len}, cache_info={cache!r}"
@@ -243,14 +199,19 @@ class Clients(Workflow):
             cache=getattr(result_obj, "cache_info", None),
         )
         log.info(m)
-        if cache_paging:
+
+        if paging:
             total_rows = result_obj.cache_info.filtered_row_count
             paging_get_args = {k: v for k, v in get_args.items()}
+
             while len(result_obj) < total_rows:
-                paging_get_args["row_start"] += cache_paging
-                paging_result = adapter.cmd_get(obj=find_obj, **paging_get_args)
-                log.debug(paging_result.http_response(http_client=adapter.http_client))
-                paging_result_obj = paging_result()
+                row_start += row_count
+                paging_get_args["row_start"] = row_start
+                result = adapter.cmd_get(**paging_get_args)
+
+                log.debug(result.pretty_bodies())
+
+                paging_result_obj = result()
 
                 m = "Received page of {o!r} length={len}, cache_info={cache!r}"
                 m = m.format(
@@ -261,6 +222,7 @@ class Clients(Workflow):
                 log.info(m)
 
                 result_obj += paging_result_obj
+
                 m = "{o!r} received so far {len} out of total {total}"
                 m = m.format(
                     o=result_obj.__class__.__name__,
@@ -268,414 +230,8 @@ class Clients(Workflow):
                     total=total_rows,
                 )
                 log.info(m)
+
         return cls(adapter=adapter, obj=result_obj, lvl=lvl, result=result)
-
-
-class Question(Workflow):
-    def __str__(self):
-        """Show object info.
-
-        Returns:
-            (:obj:`str`)
-
-        """
-        ctmpl = "{c.__module__}.{c.__name__}".format
-        atmpl = "{k}='{v}'".format
-        attrs = ["id", "query_text"]
-        bits = [atmpl(k=attr, v=getattr(self.obj, attr, None)) for attr in attrs]
-        bits += [atmpl(k=k, v=v) for k, v in self.expiration.items()]
-        bits = "(\n  {},\n)".format(",\n  ".join(bits))
-        cls = ctmpl(c=self.__class__)
-        return "{cls}{bits}".format(cls=cls, bits=bits)
-
-    @classmethod
-    def new(cls, adapter, lvl="info"):
-        """Create a new Question workflow.
-
-        Args:
-            adapter (:obj:`tantrum.adapters.Adapter`):
-                Adapter to use for this workflow.
-            lvl (:obj:`str`, optional):
-                Logging level.
-
-                Defaults to: "info".
-
-        Returns:
-            :obj:`Question`
-
-        """
-        return cls(obj=adapter.api_objects.Question(), adapter=adapter, lvl=lvl)
-
-    @classmethod
-    def get_by_id(cls, adapter, id, lvl="info"):
-        """Get a question object by id.
-
-        Args:
-            adapter (:obj:`tantrum.adapters.Adapter`):
-                Adapter to use for this workflow.
-            id (:obj:`int`):
-                id of question to fetch.
-            lvl (:obj:`str`, optional):
-                Logging level.
-
-                Defaults to: "info".
-
-        Returns:
-            :obj:`Question`
-
-        """
-        result = adapter.cmd_get(obj=adapter.api_objects.Question(id=id))
-        return cls(adapter=adapter, obj=result(), lvl=lvl, result=result)
-
-    def _check_id(self):
-        """Check that question has been asked if id is set."""
-        if not self.obj.id:
-            m = "No id issued yet, ask the question!"
-            raise exceptions.ModuleError(m)
-
-    @property
-    def expiration(self):
-        """Get expiration details for this question.
-
-        Returns:
-            :obj:`dict`
-
-        """
-        now_dt = datetime.datetime.utcnow()
-        now_td = datetime.timedelta()
-        ret = {
-            "expiration": now_dt,
-            "expire_in": now_td,
-            "expire_ago": now_td,
-            "expired": True,
-        }
-        if self.obj.expiration:
-            ex_dt = self.api_objects.module_dt_format(self.obj.expiration)
-            is_ex = now_dt >= ex_dt
-            ret["expiration"] = ex_dt
-            ret["expired"] = is_ex
-            if is_ex:
-                ret["expire_ago"] = now_dt - ex_dt
-            else:
-                ret["expire_in"] = ex_dt - now_dt
-        return ret
-
-    def refetch(self):
-        """Re-fetch this question."""
-        self._check_id()
-        result = self.adapter.cmd_get(obj=self.obj)
-        self._last_result = result
-        self.obj = result()
-
-    def ask(self, **kwargs):
-        """Ask the question.
-
-        Notes:
-            If question has already been asked (id is set), we wipe out attrs:
-            ["id", "context_group", "management_rights_group"], then add it.
-
-        """
-        if self.obj.id:
-            wipe_attrs = ["id", "context_group", "management_rights_group"]
-            for attr in wipe_attrs:
-                setattr(self.obj, attr, None)
-        result = self.adapter.cmd_add(obj=self.obj, **kwargs)
-        self._last_result = result
-        self.obj = result()
-        self.refetch()
-
-    def answers_get_info(self):
-        """Return the ResultInfo for this question.
-
-        Returns:
-            :obj:`tantrum.api_models.ApiModel`: ResultInfoList API Object
-
-        """
-        self._check_id()
-
-        result = self.adapter.cmd_get_result_info(obj=self.obj)
-        self._last_result = result
-
-        infos = result()
-        self._last_infos = infos
-
-        m = "Received answers info: {infos}"
-        m = m.format(infos=infos.serialize())
-        self.log.debug(m)
-        self.log.debug(format(self))
-        return infos
-
-    def answers_poll(self, sleep=5, pct=99, secs=0, total=0):
-        """Poll for answers from clients for this question.
-
-        Args:
-            sleep (:obj:`int`, optional):
-                Check for answers every N seconds.
-
-                Defaults to: 5.
-            pct (:obj:`int`, optional):
-                Wait until the percentage of clients total is N percent.
-
-                Defaults to: 99.
-            secs (:obj:`int`, optional):
-                If not 0, wait until N seconds for pct of clients total instead of
-                until question expiration.
-
-                Defaults to: 0.
-            total (:obj:`int`, optional):
-                If not 0, wait until N clients have total instead of
-                ``estimated_total`` of clients from API.
-
-                Defaults to: 0.
-
-        Returns:
-            :obj:`object`: ResultInfoList API object
-
-        """
-        self._check_id()
-
-        start = datetime.datetime.utcnow()
-
-        if secs:
-            stop_dt = start + datetime.timedelta(seconds=secs)
-        else:
-            stop_dt = self.expiration["expiration"]
-
-        m = "Start polling loop for answers until for {o} until {stop_dt}"
-        m = m.format(o=self, stop_dt=stop_dt)
-        self.log.debug(m)
-
-        infos = self.answers_get_info()
-        info = infos[0]
-        est_total = info.estimated_total
-        this_total = total if total and total <= est_total else est_total
-        now_pct = utils.tools.calc_percent(part=info.mr_passed, whole=this_total)
-
-        while True:
-            m = "New polling loop for {o}"
-            m = m.format(o=self)
-            self.log.debug(m)
-
-            if now_pct >= pct:
-                m = "Reached {now_pct} out of {pct}, considering all answers in"
-                m = m.format(now_pct=PCT_FMT(now_pct), pct=PCT_FMT(pct))
-                self.log.info(m)
-                break
-
-            if datetime.datetime.utcnow() >= stop_dt:
-                m = "Reached stop_dt {stop_dt}, considering all answers in"
-                m = m.format(stop_dt=stop_dt)
-                self.log.info(m)
-                break
-
-            if self.expiration["expired"]:
-                m = "Reached expiration {expiration}, considering all answers in"
-                m = m.format(expiration=self.expiration)
-                self.log.info(m)
-                break
-
-            time.sleep(sleep)
-
-            infos = self.answers_get_info()
-            info = infos[0]
-            now_pct = utils.tools.calc_percent(part=info.mr_passed, whole=this_total)
-
-            m = [
-                "Answers in {now_pct} out of {pct}",
-                "{info.mr_passed} out of {this_total}",
-                "estimated_total: {info.estimated_total}",
-            ]
-            m = ", ".join(m)
-            m = m.format(
-                now_pct=PCT_FMT(now_pct),
-                pct=PCT_FMT(pct),
-                info=info,
-                this_total=this_total,
-            )
-            self.log.info(m)
-
-        end = datetime.datetime.utcnow()
-        elapsed = end - start
-        m = [
-            "Finished polling in: {dt}",
-            "clients answered: {info.mr_passed}",
-            "estimated clients: {info.estimated_total}",
-            "rows in answers: {info.row_count}",
-        ]
-        m = ", ".join(m)
-        m = m.format(dt=elapsed, info=info)
-        self.log.info(m)
-        return infos
-
-    def answers_get_data(self, include_hashes=False):
-        """Get the answers for this question.
-
-        Args:
-            include_hashes (:obj:`bool`, optional):
-                Have the API include the hashes of rows values
-
-                Defaults to: False.
-
-        Notes:
-            This will not use any paging, which means ALL answers will be returned
-            in one API response. For large data sets of answers, this is unwise.
-
-        Returns:
-            :obj:`tantrum.api_models.ApiModel`: ResultDataList API Object
-
-        """
-        self._check_id()
-
-        start = datetime.datetime.utcnow()
-        result = self.adapter.cmd_get_result_data(
-            obj=self.obj, include_hashes_flag=include_hashes
-        )
-        self._last_result = result
-
-        end = datetime.datetime.utcnow()
-        elapsed = end - start
-
-        m = "Finished getting answers in {dt}"
-        m = m.format(dt=elapsed)
-        self.log.info(m)
-
-        datas = result()
-        self._last_datas = datas
-        return datas
-
-    def answers_get_data_paged(
-        self, size=1000, cache_expiration=900, include_hashes=False
-    ):
-        """Get the answers for this question one page at a time.
-
-        Args:
-            size (:obj:`int`, optional):
-                Size of each page to fetch at a time.
-
-                Defaults to: 1000.
-            cache_expiratio (:obj:`int`, optional):
-                Have the API keep the cache_id that is created on initial get
-                answers page alive for N seconds.
-
-                Defaults to: 900.
-            include_hashes (:obj:`bool`, optional):
-                Have the API include the hashes of rows values
-
-                Defaults to: False.
-
-        Returns:
-            :obj:`tantrum.api_models.ApiModel`: ResultDataList API Object
-
-        """
-        self._check_id()
-
-        start = datetime.datetime.utcnow()
-
-        row_start = 0
-        row_count = size
-
-        result = self.adapter.cmd_get_result_data(
-            obj=self.obj,
-            row_start=row_start,
-            row_count=row_count,
-            cache_expiration=cache_expiration,
-            include_hashes_flag=include_hashes,
-        )
-        self._last_result = result
-
-        datas = result()
-        self._last_datas = datas
-
-        data = datas[0]
-        cache_id = data.cache_id
-        page_count = 1
-        row_start += row_count
-        all_rows = data.rows
-
-        m = "Received initial answers: {rows}"
-        m = m.format(rows=data.rows)
-        self.log.info(m)
-
-        while True:
-            time.sleep(1)
-
-            page_result = self.adapter.cmd_get_result_data(
-                obj=self.obj,
-                row_start=row_start,
-                row_count=row_count,
-                cache_id=cache_id,
-                cache_expiration=cache_expiration,
-                include_hashes_flag=include_hashes,
-            )
-            self._last_result = page_result
-
-            # this should catch errors where API returns result data as None sometimes
-            # need to refetch data for N retries if that happens
-            page_datas = page_result()
-            self._last_datas = page_datas
-
-            page_data = page_datas[0]
-
-            page_rows = page_data.rows
-
-            m = "Received page #{page_count} answers: {rows}"
-            m = m.format(page_count=page_count, rows=len(page_rows or []))
-            self.log.info(m)
-
-            # this is less than ideal, should check page_data.row_count
-            if not page_rows:
-                m = "Received a page with no answers, considering all answers received"
-                self.log.info(m)
-                break
-
-            all_rows += page_rows
-            row_start += row_count
-            page_count += 1
-
-        end = datetime.datetime.utcnow()
-        elapsed = end - start
-
-        m = "Finished getting {rows} answers in {dt}"
-        m = m.format(rows=len(all_rows or []), dt=elapsed)
-        self.log.info(m)
-
-        return datas
-
-    def answers_get_data_sse_xml(self):
-        return NotImplementedError
-
-    def answers_get_data_sse_csv(self):
-        return NotImplementedError
-
-    def answers_get_data_sse_cef(self):
-        return NotImplementedError
-
-    def add_left_sensor(
-        self, sensor, set_param_defaults=True, allow_empty_params=False
-    ):
-        """Add a sensor to the left hand side of the question.
-
-        Args:
-            sensor (:obj:`Sensor`):
-                Sensor workflow object.
-            set_param_defaults (:obj:`bool`, optional):
-                If sensor has parameters defined, and no value is set,
-                try to derive the default value from each parameters definition.
-
-                Defaults to: True.
-            allow_empty_params (:obj:`bool`, optional):
-                If sensor has parameters defined, and the value is not set, "", or None,
-                throw an exception.
-
-                Defaults to: True.
-
-        """
-        select = sensor.build_select(
-            set_param_defaults=set_param_defaults, allow_empty_params=allow_empty_params
-        )
-        if not getattr(self.obj, "selects", None):
-            self.obj.selects = self.api_objects.SelectList()
-        self.obj.selects.append(select)
 
 
 class Sensor(Workflow):
@@ -960,6 +516,1138 @@ class Sensor(Workflow):
         return select
 
 
+class AnswersMixin(object):
+    def answers_get_info(self, **kwargs):
+        """Return the ResultInfo for this question.
+
+        Args:
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_get_result_info`.
+
+        Returns:
+            :obj:`tantrum.api_models.ApiModel`: ResultInfoList API Object
+
+        """
+        self._check_id()
+
+        cmd_args = {}
+        cmd_args.update(kwargs)
+        cmd_args["obj"] = self.obj
+
+        result = self.adapter.cmd_get_result_info(**cmd_args)
+
+        self._last_result = result
+
+        infos = result()
+
+        self._last_infos = infos
+
+        m = "Received answers info: {infos}"
+        m = m.format(infos=infos.serialize())
+        self.log.debug(m)
+        self.log.debug(format(self))
+
+        return infos
+
+    def answers_poll(
+        self,
+        poll_pct=99,
+        poll_secs=0,
+        poll_total=0,
+        poll_sleep=5,
+        max_poll_count=0,
+        **kwargs
+    ):
+        """Poll for answers from clients for this question.
+
+        Args:
+            poll_sleep (:obj:`int`, optional):
+                Check for answers every N seconds.
+
+                Defaults to: 5.
+            poll_pct (:obj:`int`, optional):
+                Wait until the percentage of clients total is N percent.
+
+                Defaults to: 99.
+            poll_secs (:obj:`int`, optional):
+                If not 0, wait until N seconds for pct of clients total instead of
+                until question expiration.
+
+                Defaults to: 0.
+            poll_total (:obj:`int`, optional):
+                If not 0, wait until N clients have total instead of
+                ``estimated_total`` of clients from API.
+
+                Defaults to: 0.
+            max_poll_count (:obj:`int`, optional):
+                If not 0, only poll N times.
+
+                Defaults to: 0.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`answers_get_info`.
+
+        Returns:
+            :obj:`object`: ResultInfoList API object
+
+        """
+        self._check_id()
+
+        cmd_args = {}
+        cmd_args.update(kwargs)
+        cmd_args["obj"] = self.obj
+
+        start = datetime.datetime.utcnow()
+
+        if poll_secs:
+            stop_dt = start + datetime.timedelta(seconds=poll_secs)
+        else:
+            stop_dt = self.expiration["expiration"]
+
+        m = "Start polling loop for answers until for {o} until {stop_dt}"
+        m = m.format(o=self, stop_dt=stop_dt)
+        self.log.debug(m)
+
+        infos = self.answers_get_info(**kwargs)
+        info = infos[0]
+        est_total = info.estimated_total
+        poll_total = est_total
+
+        if poll_total and poll_total <= est_total:
+            this_total = poll_total
+
+        now_pct = utils.tools.calc_percent(part=info.mr_passed, whole=this_total)
+
+        poll_count = 0
+        while True:
+            poll_count += 1
+            m = "New polling loop #{c} for {o}"
+            m = m.format(c=poll_count, o=self)
+            self.log.debug(m)
+
+            if now_pct >= poll_pct:
+                m = "Reached {now_pct} out of {pct}, considering all answers in"
+                m = m.format(now_pct=PCT_FMT(now_pct), pct=PCT_FMT(poll_pct))
+                self.log.info(m)
+                break
+
+            if datetime.datetime.utcnow() >= stop_dt:
+                m = "Reached stop_dt {stop_dt}, considering all answers in"
+                m = m.format(stop_dt=stop_dt)
+                self.log.info(m)
+                break
+
+            if self.expiration["expired"]:
+                m = "Reached expiration {expiration}, considering all answers in"
+                m = m.format(expiration=self.expiration)
+                self.log.info(m)
+                break
+
+            if max_poll_count and poll_count >= max_poll_count:
+                m = "Reached max poll count {c}, considering all answers in"
+                m = m.format(c=max_poll_count)
+                self.log.info(m)
+                break
+
+            time.sleep(poll_sleep)
+
+            infos = self.answers_get_info(**kwargs)
+            info = infos[0]
+
+            now_pct = utils.tools.calc_percent(part=info.mr_passed, whole=this_total)
+
+            m = [
+                "Answers in {now_pct} out of {pct}",
+                "{info.mr_passed} out of {this_total}",
+                "estimated_total: {info.estimated_total}",
+                "poll count: {c}",
+            ]
+            m = ", ".join(m)
+            m = m.format(
+                now_pct=PCT_FMT(now_pct),
+                pct=PCT_FMT(poll_pct),
+                info=info,
+                this_total=this_total,
+                c=poll_count,
+            )
+            self.log.info(m)
+
+        end = datetime.datetime.utcnow()
+        elapsed = end - start
+
+        m = [
+            "Finished polling in: {dt}",
+            "clients answered: {info.mr_passed}",
+            "estimated clients: {info.estimated_total}",
+            "rows in answers: {info.row_count}",
+            "poll count: {c}",
+        ]
+        m = ", ".join(m)
+        m = m.format(dt=elapsed, info=info, c=poll_count)
+        self.log.info(m)
+
+        return infos
+
+    def answers_get_data(self, hashes=False, **kwargs):
+        """Get the answers for this question.
+
+        Args:
+            hashes (:obj:`bool`, optional):
+                Have the API include the hashes of rows values.
+
+                Defaults to: False.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_get_result_data`.
+
+        Notes:
+            This will not use any paging, which means ALL answers will be returned
+            in one API response. For large data sets of answers, this is unwise.
+
+        Returns:
+            :obj:`tantrum.api_models.ApiModel`: ResultDataList API Object
+
+        """
+        self._check_id()
+
+        start = datetime.datetime.utcnow()
+
+        cmd_args = {}
+        cmd_args.update(kwargs)
+        cmd_args["obj"] = self.obj
+        cmd_args["include_hashes_flag"] = hashes
+
+        result = self.adapter.cmd_get_result_data(**cmd_args)
+        self._last_result = result
+
+        end = datetime.datetime.utcnow()
+        elapsed = end - start
+
+        m = "Finished getting answers in {dt}"
+        m = m.format(dt=elapsed)
+        self.log.info(m)
+
+        datas = result()
+        self._last_datas = datas
+        return datas
+
+    def answers_get_data_paged(
+        self,
+        page_size=1000,
+        max_page_count=0,
+        max_row_count=0,
+        cache_expiration=900,
+        hashes=False,
+        sleep=5,
+        **kwargs
+    ):
+        """Get the answers for this question one page at a time.
+
+        Args:
+            page_size (:obj:`int`, optional):
+                Size of each page to fetch at a time.
+
+                Defaults to: 1000.
+            max_page_count (:obj:`int`, optional):
+                Only fetch up to this many pages.
+
+                Defaults to: 0.
+            max_row_count (:obj:`int`, optional):
+                Only fetch up to this many rows.
+
+                Defaults to: 0.
+            cache_expiration (:obj:`int`, optional):
+                Have the API keep the cache_id that is created on initial get
+                answers page alive for N seconds.
+
+                Defaults to: 900.
+            hashes (:obj:`bool`, optional):
+                Have the API include the hashes of rows values
+
+                Defaults to: False.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_get_result_data`.
+
+        Notes:
+            If max_page_count and max_row_count are 0, fetch pages until a page
+            returns no answers or the expected row count is hit.
+
+        Returns:
+            :obj:`tantrum.api_models.ApiModel`: ResultDataList API Object
+
+        """
+        self._check_id()
+
+        start = datetime.datetime.utcnow()
+
+        row_start = 0
+
+        cmd_args = {}
+        cmd_args.update(kwargs)
+        cmd_args["obj"] = self.obj
+        cmd_args["row_start"] = row_start
+        cmd_args["row_count"] = page_size
+        cmd_args["cache_expiration"] = cache_expiration
+        cmd_args["include_hashes_flag"] = hashes
+
+        result = self.adapter.cmd_get_result_data(**cmd_args)
+
+        self._last_result = result
+
+        datas = result()
+        self._last_datas = datas
+
+        data = datas[0]
+
+        cmd_args["cache_id"] = data.cache_id
+        cmd_args["row_start"] += page_size
+
+        m = [
+            "Received initial answers: {d.rows}",
+            "expected row_count: {d.row_count}",
+            "estimated total clients: {d.estimated_total}",
+        ]
+        m = ", ".join(m)
+        m = m.format(d=data)
+        self.log.info(m)
+
+        all_rows = data.rows
+        page_count = 1
+
+        while True:
+            time.sleep(sleep)
+
+            page_result = self.adapter.cmd_get_result_data(**cmd_args)
+            self._last_result = page_result
+
+            # this should catch errors where API returns result data as None sometimes
+            # need to refetch data for N retries if that happens
+            page_datas = page_result()
+            self._last_datas = page_datas
+
+            page_data = page_datas[0]
+            page_rows = page_data.rows
+
+            m = "Received page #{c} answers: {rows}"
+            m = m.format(c=page_count, rows=len(page_rows or []))
+            self.log.info(m)
+
+            if len(all_rows or []) >= data.row_count:
+                m = "Received expected row_count {c}, considering all answers received"
+                m = m.format(c=data.row_count)
+                self.log.info(m)
+                break
+
+            if not page_rows:
+                m = "Received a page with no answers, considering all answers received"
+                self.log.info(m)
+                break
+
+            if max_page_count and page_count >= max_page_count:
+                m = "Reached max page count {c}, considering all answers in"
+                m = m.format(c=max_page_count)
+                self.log.info(m)
+                break
+
+            all_rows += page_rows
+            page_count += 1
+            cmd_args["row_start"] += page_size
+
+            if max_row_count and len(all_rows or []) >= max_row_count:
+                m = "Hit max pages of {max_row_count}, considering all answers received"
+                m = m.format(max_row_count=max_row_count)
+                self.log.info(m)
+
+        end = datetime.datetime.utcnow()
+        elapsed = end - start
+
+        m = "Finished getting {rows} answers in {dt}"
+        m = m.format(rows=len(all_rows or []), dt=elapsed)
+        self.log.info(m)
+
+        return datas
+
+    def answers_sse_start_xml(self, hashes=False, **kwargs):
+        """Start up a server side export for XML format and get an export_id.
+
+        Args:
+            hashes (:obj:`bool`, optional):
+                Have the API include the hashes of rows values
+
+                Defaults to: False.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_get_result_data`.
+
+        Returns:
+            :obj:`str`:
+
+        """
+        cmd_args = {}
+        cmd_args.update(kwargs)
+        cmd_args["obj"] = self.obj
+        cmd_args["export_flag"] = True
+        cmd_args["export_format"] = 1
+        cmd_args["include_hashes_flag"] = hashes
+
+        result = self.adapter.cmd_get_result_data(**cmd_args)
+        self._last_result = result
+
+        m = ["Received Server Side Export start response for XML format", "code={c}"]
+        m = ", ".join(m)
+        m = m.format(c=result.status_code)
+        self.log.debug(m)
+
+        export_id = result.object_obj["export_id"]
+
+        m = ["Started Server Side for XML format", "export_id={e!r}"]
+        m = ", ".join(m)
+        m = m.format(e=export_id)
+        self.log.info(m)
+
+        return export_id
+
+    def answers_sse_start_csv(
+        self, flatten=False, headers=True, hashes=False, **kwargs
+    ):
+        """Start up a server side export for CSV format and get an export_id.
+
+        Args:
+            flatten (:obj:`bool`, optional):
+                Flatten CSV rows if possible (single line in each cell)
+
+                Defaults to: False.
+            headers (:obj:`bool`, optional):
+                Include column headers.
+
+                Defaults to: True.
+            hashes (:obj:`bool`, optional):
+                Have the API include the hashes of rows values
+
+                Defaults to: False.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_get_result_data`.
+
+        Returns:
+            :obj:`str`:
+
+        """
+        cmd_args = {}
+        cmd_args.update(kwargs)
+        cmd_args["obj"] = self.obj
+        cmd_args["export_flag"] = True
+        cmd_args["export_format"] = 3 if flatten else 0
+        cmd_args["export_hide_csv_header_flag"] = False if headers else True
+        cmd_args["include_hashes_flag"] = hashes
+
+        result = self.adapter.cmd_get_result_data(**cmd_args)
+        self._last_result = result
+
+        m = ["Received Server Side Export start response for CSV format", "code={c}"]
+        m = ", ".join(m)
+        m = m.format(c=result.status_code)
+        self.log.debug(m)
+
+        export_id = result.object_obj["export_id"]
+
+        m = ["Started Server Side for CSV format", "export_id={e!r}"]
+        m = ", ".join(m)
+        m = m.format(e=export_id)
+        self.log.info(m)
+
+        return export_id
+
+    def answers_sse_start_cef(self, hashes=False, leading="", trailing="", **kwargs):
+        """Start up a server side export for CEF format and get an export_id.
+
+        Args:
+            hashes (:obj:`bool`, optional):
+                Have the API include the hashes of rows values
+
+                Defaults to: False.
+            leading (:obj:`str`, optional):
+                Prepend this text to each line.
+
+                Defaults to: "".
+            trailing (:obj:`str`, optional):
+                Append this text to each line.
+
+                Defaults to: "".
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_get_result_data`.
+
+        Returns:
+            :obj:`str`:
+
+        """
+        cmd_args = {}
+        cmd_args.update(kwargs)
+        cmd_args["obj"] = self.obj
+        cmd_args["export_flag"] = True
+        cmd_args["export_format"] = 2
+        cmd_args["include_hashes_flag"] = hashes
+
+        if leading:
+            cmd_args["export_leading_text"] = leading
+
+        if trailing:
+            cmd_args["export_trailing_text"] = trailing
+
+        result = self.adapter.cmd_get_result_data(**cmd_args)
+        self._last_result = result
+
+        m = ["Received Server Side Export start response for CEF format", "code={c}"]
+        m = ", ".join(m)
+        m = m.format(c=result.status_code)
+        self.log.debug(m)
+
+        export_id = result.object_obj["export_id"]
+
+        m = ["Started Server Side for CEF format", "export_id={e!r}"]
+        m = ", ".join(m)
+        m = m.format(e=export_id)
+        self.log.info(m)
+
+        return export_id
+
+    def answers_sse_get_status(self, export_id, **kwargs):
+        """Get the status for this questions server side export.
+
+        Args:
+            export_id (:obj:`str`):
+                An export id returned from :meth:`sse_start`.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapters.ApiClient`.
+
+        Returns:
+            :obj:`dict`:
+
+        """
+        client_args = {}
+        client_args.update(kwargs)
+        client_args["method"] = "get"
+        client_args["path"] = "export/{export_id}.status".format(export_id=export_id)
+        client_args["data"] = ""
+
+        r = self.adapter.api_client(**client_args)
+
+        status_split = [x.strip().lower() for x in r.text.split(".") if x.strip()]
+        status = dict(zip(["status", "progress"], status_split))
+        status["export_id"] = export_id
+
+        m = [
+            "Received SSE status response: path={r.request.url!r}",
+            "code={r.status_code}",
+            "status={status}",
+        ]
+        m = ", ".join(m)
+        m = m.format(r=r, status=status)
+        self.log.debug(m)
+
+        return status
+
+    def answers_sse_poll(self, export_id, poll_sleep=5, max_poll_count=0, **kwargs):
+        """Poll a server side export for completion.
+
+        Args:
+            export_id (:obj:`str`):
+                An export id returned from :meth:`answers_sse_start_xml` or
+                :meth:`answers_sse_start_csv` or :meth:`answers_sse_start_cef`.
+            poll_sleep (:obj:`int`, optional):
+                Check for answers every N seconds.
+
+                Defaults to: 5.
+            max_poll_count (:obj:`int`, optional):
+                If not 0, only poll N times.
+
+                Defaults to: 0.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`answers_sse_get_status`.
+
+        Returns:
+            :obj:`str`:
+
+        """
+        self._check_id()
+
+        start = datetime.datetime.utcnow()
+
+        poll_count = 0
+
+        sse_args = {}
+        sse_args.update(kwargs)
+        sse_args["export_id"] = export_id
+
+        status = self.answers_sse_get_status(**sse_args)
+
+        while True:
+            poll_count += 1
+
+            if max_poll_count and poll_count >= max_poll_count:
+                m = [
+                    "Server Side Export completed",
+                    "reached max poll count {c}",
+                    "status {status}",
+                ]
+                m = ", ".join(m)
+                m = m.format(c=max_poll_count, status=status)
+                self.log.info(m)
+                break
+
+            if status["status"] == "completed":
+                m = "Server Side Export completed: {status}"
+                m = m.format(status=status)
+                self.log.info(m)
+                break
+
+            if status["status"] == "failed":
+                m = "Server Side Export failed: {status}"
+                m = m.format(status=status)
+                raise exceptions.ModuleError(m)
+
+            time.sleep(poll_sleep)
+            status = self.answers_sse_get_status(**sse_args)
+
+        end = datetime.datetime.utcnow()
+        elapsed = end - start
+
+        m = "Finished polling for Server Side Export in {dt}, {status}"
+        m = m.format(dt=elapsed, status=status)
+        self.log.info(m)
+
+        return status
+
+    def answers_sse_get_data(
+        self, export_id, return_dict=False, return_obj=True, **kwargs
+    ):
+        """Get the answers for this question in XML format using server side export.
+
+        Args:
+            export_id (:obj:`str`):
+                An export id returned from :meth:`sse_start`.
+            return_dict (:obj:`bool`, optional):
+                If export_id is an XML format, return a dictionary object.
+
+                Defaults to: False.
+            return_obj (:obj:`bool`, optional):
+                If export_id is XML format, return a ResultSet object.
+
+                Defaults to: True.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapters.ApiClient`.
+
+        Notes:
+            If export_id is not XML format or return_dict and return_obj False,
+            return the raw text as is.
+
+        Returns:
+            :obj:`tantrum.api_models.ApiModel` or :obj:`dict` or :obj:`str`:
+                If return_obj = True returns ResultSetList ApiModel object.
+                If return_dict = True returns dict.
+                Otherwise, return str.
+
+        """
+        self._check_id()
+
+        client_args = {}
+        client_args.update(kwargs)
+        client_args["method"] = "get"
+        client_args["path"] = "export/{export_id}.gz".format(export_id=export_id)
+        client_args["data"] = ""
+
+        r = self.adapter.api_client(**client_args)
+
+        m = ["Received SSE data response", "code: {r.status_code}", "export_id: {e!r}"]
+        m = ", ".join(m)
+        m = m.format(r=r, e=export_id)
+        self.log.info(m)
+
+        data = r.text
+
+        if "xml" in export_id and (return_dict or return_obj):
+            result = results.Soap(
+                api_objects=self.api_objects,
+                response_body=r.text,
+                request_body=r.request.body,
+                method=r.request.method,
+                url=r.request.url,
+                status_code=r.status_code,
+                origin=r,
+                lvl=self.log.level,
+            )
+            data = "<{r}>{data}</{r}>".format(data=data, r="result_set")
+            src = "SSE get data response"
+            data = result.str_to_obj(text=data, src=src, try_int=False)
+
+            if return_dict:
+                return data
+
+            data = self.api_objects.ResultSet(**data["result_set"])
+            data = self.api_objects.ResultSetList(*[data])
+            return data
+
+        return data
+
+
+class Question(Workflow, AnswersMixin):
+    def __str__(self):
+        """Show object info.
+
+        Returns:
+            (:obj:`str`)
+
+        """
+        ctmpl = "{c.__module__}.{c.__name__}".format
+        atmpl = "{k}='{v}'".format
+        attrs = ["id", "query_text"]
+        bits = [atmpl(k=attr, v=getattr(self.obj, attr, None)) for attr in attrs]
+        bits += [atmpl(k=k, v=v) for k, v in self.expiration.items()]
+        bits = "(\n  {},\n)".format(",\n  ".join(bits))
+        cls = ctmpl(c=self.__class__)
+        return "{cls}{bits}".format(cls=cls, bits=bits)
+
+    @classmethod
+    def new(cls, adapter, lvl="info"):
+        """Create a new Question workflow.
+
+        Args:
+            adapter (:obj:`tantrum.adapters.Adapter`):
+                Adapter to use for this workflow.
+            lvl (:obj:`str`, optional):
+                Logging level.
+
+                Defaults to: "info".
+
+        Returns:
+            :obj:`Question`
+
+        """
+        return cls(obj=adapter.api_objects.Question(), adapter=adapter, lvl=lvl)
+
+    @classmethod
+    def get_by_id(cls, adapter, id, lvl="info"):
+        """Get a question object by id.
+
+        Args:
+            adapter (:obj:`tantrum.adapters.Adapter`):
+                Adapter to use for this workflow.
+            id (:obj:`int`):
+                id of question to fetch.
+            lvl (:obj:`str`, optional):
+                Logging level.
+
+                Defaults to: "info".
+
+        Returns:
+            :obj:`Question`
+
+        """
+        result = adapter.cmd_get(obj=adapter.api_objects.Question(id=id))
+        return cls(adapter=adapter, obj=result(), lvl=lvl, result=result)
+
+    def _check_id(self):
+        """Check that question has been asked by seeing if self.obj.id is set."""
+        if not self.obj.id:
+            m = "No id issued yet, ask the question!"
+            raise exceptions.ModuleError(m)
+
+    @property
+    def expiration(self):
+        """Get expiration details for this question.
+
+        Returns:
+            :obj:`dict`
+
+        """
+        now_dt = datetime.datetime.utcnow()
+        now_td = datetime.timedelta()
+        ret = {
+            "expiration": now_dt,
+            "expire_in": now_td,
+            "expire_ago": now_td,
+            "expired": True,
+        }
+        if self.obj.expiration:
+            ex_dt = self.api_objects.module_dt_format(self.obj.expiration)
+            is_ex = now_dt >= ex_dt
+            ret["expiration"] = ex_dt
+            ret["expired"] = is_ex
+            if is_ex:
+                ret["expire_ago"] = now_dt - ex_dt
+            else:
+                ret["expire_in"] = ex_dt - now_dt
+        return ret
+
+    def refetch(self):
+        """Re-fetch this question."""
+        self._check_id()
+        result = self.adapter.cmd_get(obj=self.obj)
+        self._last_result = result
+        self.obj = result()
+
+    def ask(self, add_computer_id=True, **kwargs):
+        """Ask the question.
+
+        Args:
+            add_computer_id (:obj:`bool`):
+                id of question to fetch.
+            lvl (:obj:`str`, optional):
+                Logging level.
+
+                Defaults to: "info".
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_add`.
+
+        Notes:
+            If question has already been asked (id is set), we wipe out attrs:
+            ["id", "context_group", "management_rights_group"], then add it.
+
+        """
+        if self.obj.id:
+            wipe_attrs = ["id", "context_group", "management_rights_group"]
+            for attr in wipe_attrs:
+                setattr(self.obj, attr, None)
+        result = self.adapter.cmd_add(obj=self.obj, **kwargs)
+        self._last_result = result
+        self.obj = result()
+        self.refetch()
+
+    def add_left_sensor(
+        self, sensor, set_param_defaults=True, allow_empty_params=False
+    ):
+        """Add a sensor to the left hand side of the question.
+
+        Args:
+            sensor (:obj:`Sensor`):
+                Sensor workflow object.
+            set_param_defaults (:obj:`bool`, optional):
+                If sensor has parameters defined, and no value is set,
+                try to derive the default value from each parameters definition.
+
+                Defaults to: True.
+            allow_empty_params (:obj:`bool`, optional):
+                If sensor has parameters defined, and the value is not set, "", or None,
+                throw an exception.
+
+                Defaults to: True.
+
+        """
+        select = sensor.build_select(
+            set_param_defaults=set_param_defaults, allow_empty_params=allow_empty_params
+        )
+        if not getattr(self.obj, "selects", None):
+            self.obj.selects = self.api_objects.SelectList()
+        self.obj.selects.append(select)
+
+
+class ParsedQuestion(Workflow, AnswersMixin):
+    def __str__(self):
+        """Show object info.
+
+        Returns:
+            (:obj:`str`)
+
+        """
+        ctmpl = "{c.__module__}.{c.__name__}".format
+        bits = [
+            "parse matches: {c}".format(c=len(self.obj)),
+            "has exact match: {em}".format(em=True if self.get_canonical else False),
+        ]
+        bits = "({})".format(", ".join(bits))
+        cls = ctmpl(c=self.__class__)
+        return "{cls}{bits}".format(cls=cls, bits=bits)
+
+    @property
+    def get_canonical(self):
+        for x in self.obj:
+            if x.question.from_canonical_text:
+                return x
+        return None
+
+    def map_select_params(self, pq):
+        """Duh."""
+        # selects = pq.question.selects or []
+        # selects_with_params = [x for x in selects if x.sensor.parameter_definition]
+        # values = pq.parameter_values or []
+        param_cls = self.api_objects.Parameter
+        param_values = pq.parameter_values
+        selects = pq.question.selects or []
+
+        for select in selects:
+            if not param_values:
+                m = "No more parameter values left to map"
+                self.log.debug(m)
+                return
+
+            sensor = select.sensor
+
+            if not sensor.parameter_definition:
+                m = "No parameters defined on sensor {s}, going to next"
+                m = m.format(s=sensor)
+                self.log.debug(m)
+                continue
+
+            sensor.source_id = sensor.id
+            sensor.id = None
+            sensor.parameters = self.api_objects.ParameterList()
+            params = json.loads(sensor.parameter_definition)["parameters"]
+
+            for param in params:
+                if not param_values:
+                    m = "No more parameter values left to map"
+                    self.log.debug(m)
+                    return
+
+                key = "||{}||".format(param["key"])
+                value = param_values.pop(0)
+                sensor.parameters.append(param_cls(key=key, value=value))
+
+                m = "Mapped parameter {k!r}='{v}' for {s}"
+                m = m.format(k=key, v=value, s=sensor)
+                self.log.debug(m)
+
+    def map_group_params(self, pq, group):
+        """Duh."""
+        param_cls = self.api_objects.Parameter
+        group_sensors = pq.question_group_sensors
+        param_values = pq.parameter_values
+
+        if not group:
+            m = "Empty group, not mapping group params"
+            self.log.debug(m)
+            return
+
+        if not group_sensors:
+            m = "No question group sensors defined, not mapping group params"
+            self.log.debug(m)
+            return
+
+        for group_filter in group.filters or []:
+            if not param_values:
+                m = "No more parameter values left to map"
+                self.log.debug(m)
+                return
+
+            m = "Now mapping parameters for group filter: {gf}"
+            m = m.format(gf=group_filter)
+            self.log.debug(m)
+
+            sensor_id = group_filter.sensor.id
+            sensor = [x for x in group_sensors if x.id == sensor_id][0]
+
+            if not sensor.parameter_definition:
+                m = "No parameters defined on sensor {s}, going to next"
+                m = m.format(s=sensor)
+                self.log.debug(m)
+                continue
+
+            sensor.source_id = sensor.id
+            sensor.id = None
+            sensor.parameters = self.api_objects.ParameterList()
+            params = json.loads(sensor.parameter_definition)["parameters"]
+            for param in params:
+                if not param_values:
+                    m = "No more parameter values left to map"
+                    self.log.debug(m)
+                    return
+
+                key = "||{}||".format(param["key"])
+                value = param_values.pop(0)
+                sensor.parameters.append(param_cls(key=key, value=value))
+
+                m = "Mapped parameter {k!r}='{v}' for {s}"
+                m = m.format(k=key, v=value, s=sensor)
+                self.log.debug(m)
+
+            group_filter.sensor = sensor
+
+        for sub_group in group.sub_groups or []:
+            self.map_group_params(pq, sub_group)
+        # param_cls = self.api_objects.Parameter
+        # for sensor in pq.question_group_sensors or []:
+        #     if not pq.parameter_values:
+        #         return
+        #     if not sensor.parameter_definition:
+        #         continue
+        #     sensor.parameters = self.api_objects.ParameterList()
+        #     params = json.loads(sensor.parameter_definition)["parameters"]
+        #     for param in params:
+        #         if not pq.parameter_values:
+        #             return
+        #         key = "||{}||".format(param["key"])
+        #         value = pq.parameter_values.pop(0)
+        #         sensor.parameters.append(param_cls(key=key, value=value))
+
+    @property
+    def result_indexes(self):
+        pq_tmpl = [
+            "  index: {i}",
+            "result: {pq.question_text!r}",
+            "params: {pq.parameter_values.LIST}",
+            "exact: {pq.question.from_canonical_text}",
+        ]
+        pq_tmpl = ", ".join(pq_tmpl).format
+        pq_list = [pq_tmpl(i=i, pq=pq) for i, pq in enumerate(self.obj)]
+        return "\n".join(pq_list)
+
+    def pick(self, index=None, use_exact_match=True, use_first=True, **kwargs):
+        """Duh."""
+        if index:
+            pq = self.obj[index]
+
+            m = "Picking parsed question based on index {index}: {pq.question}"
+            m = m.format(index=index, pq=pq)
+            self.log.info(m)
+
+        elif use_exact_match and self.get_canonical:
+            pq = self.get_canonical
+
+            m = "Picking parsed question based on exact match: {pq.question}"
+            m = m.format(pq=pq)
+            self.log.info(m)
+
+        elif use_first:
+            pq = self.obj[0]
+
+            m = "Picking first matching parsed question: {pq.question}"
+            m = m.format(pq=pq)
+            self.log.info(m)
+
+        else:
+
+            err = [
+                "No index supplied",
+                "no exact matching parsed result",
+                "and use_first is False!",
+            ]
+            err = ", ".join(err)
+            err = [err, "Supply an index of a parsed result:", self.result_indexes]
+            err = "\n".join(err)
+
+            raise exceptions.ModuleError(err)
+
+        self.map_select_params(pq=pq)
+
+        m = "Finished mapping parameters for selects, parameter values left: {pv!r}"
+        m = m.format(pv=pq.parameter_values)
+        self.log.debug(m)
+
+        self.map_group_params(pq=pq, group=pq.question.group)
+
+        m = "Finished mapping parameters for groups, parameter values left: {pv!r}"
+        m = m.format(pv=pq.parameter_values)
+        self.log.debug(m)
+
+        cmd_args = {}
+        cmd_args.update(kwargs)
+        cmd_args["obj"] = pq
+
+        result = self.adapter.cmd_add_parsed_question(**cmd_args)
+
+        result_obj = result()
+
+        workflow = Question(
+            adapter=self.adapter, obj=result_obj, lvl=self.log.level, result=result
+        )
+
+        m = "Added parsed question: {w}"
+        m = m.format(w=workflow)
+        self.log.info(m)
+
+        workflow.refetch()
+        return workflow
+
+    @classmethod
+    def parse(cls, adapter, text, lvl="info", **kwargs):
+        log = utils.logs.get_obj_log(obj=cls, lvl=lvl)
+
+        cmd_args = {}
+        cmd_args.update(kwargs)
+        cmd_args["text"] = text
+
+        result = adapter.cmd_parse_question(**cmd_args)
+        result_obj = result()
+        if result_obj is None:
+            m = "No parse results returned for text: {t!r}"
+            m = m.format(t=text)
+            raise exceptions.ModuleError(m)
+        any_canonical = any([x.question.from_canonical_text for x in result_obj])
+
+        m = "Received {n} parse results (any exact match: {ac})"
+        m = m.format(n=len(result_obj), ac=any_canonical)
+        log.info(m)
+
+        return cls(adapter=adapter, obj=result_obj, lvl=lvl, result=result)
+
+
 # parsed
 # saved
-# sensor
+
+
+OPERATOR_MAP = {
+    "less": {"op": "Less", "tmpl": "{value}"},
+    "lessequal": {"op": "LessEqual", "tmpl": "{value}"},
+    "greater": {"op": "Greater", "tmpl": "{value}"},
+    "greaterequal": {"op": "GreaterEqual", "tmpl": "{value}"},
+    "equal": {"op": "Equal", "tmpl": "{value}"},
+    "regex": {"op": "RegexMatch", "tmpl": "{value}"},
+    "startswith": {"op": "RegexMatch", "tmpl": ".*{value}"},
+    "endswith": {"op": "RegexMatch", "tmpl": "{value}.*"},
+    "contains": {"op": "RegexMatch", "tmpl": ".*{value}.*"},
+    "hash": {"op": "HashMatch", "tmpl": "{value}"},
+}
+
+
+TYPE_MAP = {
+    "Hash": 0,
+    # SENSOR_RESULT_TYPE_STRING
+    "String": 1,
+    # SENSOR_RESULT_TYPE_VERSION
+    "Version": 2,
+    # SENSOR_RESULT_TYPE_NUMERIC
+    "NumericDecimal": 3,
+    # SENSOR_RESULT_TYPE_DATE_BES
+    "BESDate": 4,
+    # SENSOR_RESULT_TYPE_IPADDRESS
+    "IPAddress": 5,
+    # SENSOR_RESULT_TYPE_DATE_WMI
+    "WMIDate": 6,
+    #  e.g. "2 years, 3 months, 18 days, 4 hours, 22 minutes:
+    # 'TimeDiff', and 3.67 seconds" or "4.2 hours"
+    # (numeric + "Y|MO|W|D|H|M|S" units)
+    "TimeDiff": 7,
+    #  e.g. 125MB or 23K or 34.2Gig (numeric + B|K|M|G|T units)
+    "DataSize": 8,
+    "NumericInteger": 9,
+    "VariousDate": 10,
+    "RegexMatch": 11,
+    "LastOperatorType": 12,
+}
+
+PCT_FMT = "{0:.0f}%".format
+
+
+def get_operator_map(operator):
+    """Validate operator against :data:`OPERATOR_MAP`."""
+    if operator in OPERATOR_MAP:
+        return OPERATOR_MAP[operator]
+    m = "Operator {o!r} is invalid, must be one of {vo}"
+    m = m.format(o=operator, vo=list(OPERATOR_MAP.keys()))
+    raise exceptions.ModuleError(m)
+
+
+def get_type_map(type):
+    """Validate type against :data:`TYPE_MAP`."""
+    if type in TYPE_MAP:
+        return TYPE_MAP[type]
+    m = "Type {o!r} is invalid, must be one of {vo}"
+    m = m.format(o=type, vo=list(TYPE_MAP.keys()))
+    raise exceptions.ModuleError(m)
