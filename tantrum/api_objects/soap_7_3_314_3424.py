@@ -839,7 +839,7 @@ class RowColumnList(ApiList):
             if item["v"] is None:
                 item["v"] = [{"text": "", "h": None}]
 
-            if isinstance(item["v"], string_types):
+            if isinstance(item["v"], simple_types):
                 item["v"] = [{"text": item["v"], "h": None}]
 
             item["v"] = self.api_coerce_list(item["v"])
@@ -946,7 +946,7 @@ class RowValue(ApiItem):
     API_NAME_SRC = ""
     """:obj:`str`: Name of object in source file."""
 
-    API_SIMPLE = {"h": "integer_types", "text": "string_types"}
+    API_SIMPLE = {"h": "integer_types", "text": "simple_types"}
     """:obj:`dict`: Map of simple attributes to their types."""
 
     API_COMPLEX = {}

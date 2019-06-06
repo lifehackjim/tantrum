@@ -6,6 +6,7 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import copy
+import json
 import operator
 import re
 import six
@@ -81,6 +82,7 @@ class ApiModel(object):
         "question_text",
         "expiration",
         "saved_question",
+        "from_canonical_text",
     ]
     """:obj:`list` of :obj:`str`: Attrs to display in str or to put first in repr."""
 
@@ -382,6 +384,10 @@ class ApiModel(object):
         raise exceptions.AttrTypeError(
             obj=self, value=value, attr=attr, be_type=be_type
         )
+
+    def serialize_json(self):
+        ser = self.serialize()
+        return json.dumps(ser, indent=2)
 
 
 class ApiItem(ApiModel):
@@ -824,19 +830,25 @@ class ApiList(ApiModel):
 
         """
         be_type = self.API_ITEM_CLS
-        be_map = {
-            float_types: self.api_coerce_float,
-            integer_types: self.api_coerce_int,
-        }
-        if be_type in be_map and not isinstance(item, be_type):
-            coercer = be_map[be_type]
-            item = coercer(value=item)
-        elif self.api_item_cls_is_complex():
+
+        if be_type is None:
+            return item
+
+        if self.api_item_cls_is_complex():
             if isinstance(item, dict):
-                item = be_type(**item)
+                return be_type(**item)
             elif isinstance(item, (list, tuple)):
-                item = be_type(*item)
-        if be_type is not None and not isinstance(item, be_type):
+                return be_type(*item)
+
+        if not isinstance(item, be_type):
+            if be_type == float_types:
+                return self.api_coerce_float(value=item)
+            if be_type == integer_types:
+                return self.api_coerce_int(value=item)
+            if be_type == string_types and isinstance(item, simple_types):
+                return item
+
+        if not isinstance(item, be_type):
             raise exceptions.ListItemTypeError(
                 obj=self, item=item, items=items, op=op, attr=attr, be_type=be_type
             )
