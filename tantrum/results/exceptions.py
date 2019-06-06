@@ -41,14 +41,12 @@ class ResponseError(ModuleError):
             txt=result.response_body_str.strip(), limit=10000
         )
         """:obj:`str`: Trimmed response body."""
-        self.request_object_obj = result.request_object_obj
-        """:obj:`object`: Pretty printed objects from request."""
 
         error = [
             "",
             "-- From: {o}".format(o=result),
-            "-- Request objects:\n{o}".format(o=self.request_object_obj),
-            "-- Response body: {o}".format(o=self.response_body),
+            "-- Request body:\n{o}".format(o=result.request_body_str),
+            "-- Response body:\n{o}".format(o=self.response_body),
             "-- Error: {o}".format(o=error),
         ]
         self.error = "\n".join(error)

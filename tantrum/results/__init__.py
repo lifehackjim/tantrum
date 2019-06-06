@@ -411,6 +411,9 @@ class Soap(Result):
             :obj:`tantrum.api_models.ApiModel`
 
         """
+        if obj is None:
+            return obj
+
         cls = self.api_objects.cls_by_name(name=api_name)
         with utils.tools.Timer() as t:
             if cls.__name__ == "ClientCount":
@@ -419,6 +422,11 @@ class Soap(Result):
                 ret = cls(*obj)
             elif isinstance(obj, dict):
                 ret = cls(**obj)
+            else:
+                error = "Error when deserializing API object name {a} into {c}: {o}"
+                error = error.format(a=api_name, o=obj, c=cls)
+                raise exceptions.ResponseError(result=self, error=error)
+
             # LATER(!) raise exc
         m = "Deserialized API name {a} obj type {t} from API into {cls!r}, took {e}"
         m = m.format(a=api_name, t=type(obj), cls=ret.__class__, e=t.elapsed)
@@ -546,7 +554,7 @@ class Soap(Result):
         if self.command_request != self.command_response:
             error = "Request {req!r} does not match response:\n{resp}"
             error = error.format(resp=self.error_text, req=self.command_request)
-            raise exceptions.ResponseError(self, error)
+            raise exceptions.ResponseError(result=self, error=error)
 
     def error_check_code(self):
         """Check if :attr:`Soap.status_code` is one of :attr:`valid_codes`.
@@ -801,65 +809,16 @@ class Soap(Result):
         self.log.debug(m)
         return ret
 
-    def pretty_xml(self, obj, **kwargs):
-        """Re-parse an XML string into a pretty XML string.
+    @staticmethod
+    def pretty_xml(obj, **kwargs):
+        return pretty_xml(obj=obj, **kwargs)
 
-        Args:
-            obj (:obj:`object`):
-                Python object to encode into a string.
-            **kwargs:
-                pretty (:obj:`bool`):
-                    Indent the output doc.
-
-                    Defaults to: True.
-                rest of kwargs:
-                    Passed to xmltodict.unparse.
-
-        Returns:
-            :obj:`str`
-
-        """
-        kwargs.setdefault("pretty", True)
-        return xmltodict.unparse(xmltodict.parse(obj), **kwargs)
-
-    def http_response(self, http_client, as_str=True):
-        """Return pretty XML of last response and request body from http_client.
-
-        Args:
-            http_client (:obj:`tantrum.http_client.HttpClient`):
-                HTTP Client to get last_response attribute from
-            as_str (:obj:`bool`, optional):
-                Return pretty XML as a string instead of a dict.
-
-                Defaults to: True.
-
-        Returns:
-            :obj:`dict` or :obj:`str`
-
-        """
-        last_response = http_client.last_response
-        ret = {"response": last_response.text, "request": last_response.request.body}
-        try:
-            ret["response"] = self.pretty_xml(last_response.text)
-        except Exception as exc:
-            ret["response_exc"] = exc
-        try:
-            ret["request"] = self.pretty_xml(last_response.request.body)
-        except Exception as exc:
-            ret["request_exc"] = exc
-        if as_str:
-            ret_list = [
-                "",
-                "<!-- Request Body -->",
-                "",
-                ret["request"],
-                "",
-                "<!-- Response Body -->",
-                "",
-                ret["response"],
-            ]
-            ret = "\n".join(ret_list)
-        return ret
+    def pretty_bodies(self, as_str=True):
+        return pretty_bodies(
+            response_body=self.response_body_str,
+            request_body=self.request_body_str,
+            as_str=as_str,
+        )
 
 
 def try_int_xml(path, key, value):
@@ -884,3 +843,64 @@ def try_int_xml(path, key, value):
         except (ValueError, TypeError):
             return key, value
     return key, value
+
+
+def pretty_xml(obj, **kwargs):
+    """Re-parse an XML string into a pretty XML string.
+
+    Args:
+        obj (:obj:`object`):
+            Python object to encode into a string.
+        **kwargs:
+            pretty (:obj:`bool`):
+                Indent the output doc.
+
+                Defaults to: True.
+            rest of kwargs:
+                Passed to xmltodict.unparse.
+
+    Returns:
+        :obj:`str`
+
+    """
+    kwargs.setdefault("pretty", True)
+    return xmltodict.unparse(xmltodict.parse(obj), **kwargs)
+
+
+def pretty_bodies(response_body, request_body, as_str=True):
+    """Return pretty XML of last response and request body from http_client.
+
+    Args:
+        http_client (:obj:`tantrum.http_client.HttpClient`):
+            HTTP Client to get last_response attribute from
+        as_str (:obj:`bool`, optional):
+            Return pretty XML as a string instead of a dict.
+
+            Defaults to: True.
+
+    Returns:
+        :obj:`dict` or :obj:`str`
+
+    """
+    ret = {"response": response_body, "request": request_body}
+    try:
+        ret["response"] = pretty_xml(response_body)
+    except Exception as exc:
+        ret["response_exc"] = exc
+    try:
+        ret["request"] = pretty_xml(request_body)
+    except Exception as exc:
+        ret["request_exc"] = exc
+    if as_str:
+        ret_list = [
+            "",
+            "<!-- Request Body -->",
+            "",
+            ret["request"],
+            "",
+            "<!-- Response Body -->",
+            "",
+            ret["response"],
+        ]
+        ret = "\n".join(ret_list)
+    return ret
