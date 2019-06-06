@@ -807,13 +807,44 @@ class RowColumnList(ApiList):
                 The list of items modified or as is.
 
         """
-        items = []
+        if not isinstance(value, (list, tuple)):
+            error = "{value} is not a list"
+            error = error.format(value=value)
+            raise exceptions.ModuleError(error)
+
+        new_value = []
         for item in value:
-            do_fix = isinstance(item, dict) and isinstance(item["v"], string_types)
-            item["v"] = {"text": item["v"], "h": None} if do_fix else item["v"]
+            if not isinstance(item, dict):
+                error = "Item {item} in {value} is not a dict"
+                error = error.format(item=item, value=value)
+                raise exceptions.ModuleError(error)
+
+            if isinstance(item["v"], (tuple, list)):
+                new_item_value = []
+                for item_value in item["v"]:
+                    if isinstance(item_value, simple_types):
+                        item_value = {"text": item_value, "h": None}
+
+                    if item_value is None:
+                        item_value = {"text": "", "h": None}
+
+                    if not isinstance(item_value, dict):
+                        error = "Item value '{item_value}' in {item} is not a dict"
+                        error = error.format(item_value=item_value, item=item["v"])
+                        raise exceptions.ModuleError(error)
+
+                    new_item_value.append(item_value)
+                item["v"] = new_item_value
+
+            if item["v"] is None:
+                item["v"] = [{"text": "", "h": None}]
+
+            if isinstance(item["v"], string_types):
+                item["v"] = [{"text": item["v"], "h": None}]
+
             item["v"] = self.api_coerce_list(item["v"])
-            items.append(item)
-        return items
+            new_value.append(item)
+        return new_value
 
 
 class RowColumn(ApiList):

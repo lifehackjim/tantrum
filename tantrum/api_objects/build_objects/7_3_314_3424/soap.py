@@ -807,6 +807,81 @@ class RowColumnList(ApiList):
                 The list of items modified or as is.
 
         """
+        if not isinstance(value, (list, tuple)):
+            error = "{value} is not a list"
+            error = error.format(value=value)
+            raise exceptions.ModuleError(error)
+
+        new_value = []
+        for item in value:
+            if not isinstance(item, dict):
+                error = "Item {item} in {value} is not a dict"
+                error = error.format(item=item, value=value)
+                raise exceptions.ModuleError(error)
+
+            if isinstance(item["v"], (tuple, list)):
+                new_item_value = []
+                for item_value in item["v"]:
+                    if isinstance(item_value, simple_types):
+                        item_value = {"text": item_value, "h": None}
+
+                    if item_value is None:
+                        item_value = {"text": "", "h": None}
+
+                    if not isinstance(item_value, dict):
+                        error = "Item value '{item_value}' in {item} is not a dict"
+                        error = error.format(item_value=item_value, item=item["v"])
+                        raise exceptions.ModuleError(error)
+
+                    new_item_value.append(item_value)
+                item["v"] = new_item_value
+
+            if item["v"] is None:
+                item["v"] = [{"text": "", "h": None}]
+
+            if isinstance(item["v"], string_types):
+                item["v"] = [{"text": item["v"], "h": None}]
+
+            item["v"] = self.api_coerce_list(item["v"])
+            new_value.append(item)
+        return new_value
+
+
+'''
+# older version of hook, it didn't work right :)
+    def api_coerce_items_hook(self, attr, value, op):
+        """Check hook that allows subclasses to modify list items.
+
+        Args:
+            attr (:obj:`str`):
+                Attribute being set on this object.
+            value (:obj:`ApiList` or :obj:`list` or :obj:`tuple`):
+                The list object holding items.
+            op (:obj:`str`):
+                Operation being performed that called this method.
+
+        Examples:
+            This converts all "v" attributes of each column for this row into a
+            list of dicts:
+
+                >>> # single value columns "v" is a single dict:
+                >>> {"v": {"h": "", "text": ""}}
+                >>> # multiple value columns "v" is a list of dict:
+                >>> {"v": [{"h": "", "text": ""}, {"h": "", "text": ""}]}
+                >>> # Count columns "v" is a string:
+                >>> {"v": "1"}
+                >>> # all become:
+                >>> {"v": [{"text": "", "hash": ""}]}
+
+        Notes:
+            The driving force behind this is basically just the Count column.
+            It returns a string of the value, instead of a dict or a list of dicts.
+
+        Returns:
+            :obj:`list`:
+                The list of items modified or as is.
+
+        """
         items = []
         for item in value:
             do_fix = isinstance(item, dict) and isinstance(item["v"], string_types)
@@ -814,6 +889,7 @@ class RowColumnList(ApiList):
             item["v"] = self.api_coerce_list(item["v"])
             items.append(item)
         return items
+'''
 
 
 class RowColumn(ApiList):
