@@ -377,7 +377,25 @@ class Soap(Adapter):
                 setattr(opts, k, kwargs[k])
         return opts.serialize(wrap_name=False)
 
-    def send(self, obj, cmd, **kwargs):
+    def send(
+        self,
+        obj,
+        cmd,
+        body_re_limit=4000,
+        ser_only_attrs=None,
+        ser_exclude_attrs=None,
+        ser_empty=None,
+        ser_list_attrs=None,
+        ser_wrap_name=None,
+        ser_wrap_item_attr=None,
+        verify=None,
+        save_last=None,
+        save_history=None,
+        log_request=None,
+        log_response=None,
+        cause="",
+        **kwargs
+    ):
         """Build and send a SOAP API request.
 
         Args:
@@ -385,37 +403,73 @@ class Soap(Adapter):
                 ApiModel to serialize and send as part of request.
             cmd (:obj:`str`):
                 SOAP Command to use in request.
+            body_re_limit (:obj:`int`):
+                Value to limit regex search of response body for <session> tag.
+
+                Defaults to: 4000.
+            ser_empty (:obj:`bool`):
+                Include attributes that have a value of None when serializing.
+                Uses False if None.
+
+                Defaults to: None.
+            ser_list_attrs (:obj:`bool`):
+                Include simple attributes of :obj:`tantrum.api_models.ApiList`
+                when serializing.
+                Uses False if None.
+
+                Defaults to: None.
+            ser_exclude_attrs (:obj:`list` of :obj:`str`):
+                Exclude these attributes when serializing.
+                Uses [] if None.
+
+                Defaults to: None.
+            ser_only_attrs (:obj:`list` of :obj:`str`):
+                Include only these attributes when serializing.
+                Uses [] if None.
+
+                Defaults to: None.
+            ser_wrap_name (:obj:`bool`):
+                Wrap the return in another dict whose key is set to the API name.
+                Uses True if None.
+
+                Defaults to: None.
+            ser_wrap_item_attr (:obj:`bool`):
+                Wrap list items in dict whose key is set to the API list
+                item attribute.
+                Uses True if None.
+
+                Defaults to: None.
+            verify (:obj:`bool` or :obj:`str`, optional):
+                Enable SSL certification validation.
+                If None uses :attr:`tantrum.http_client.HttpClient.verify`.
+
+                Defaults to: None.
+            save_last (:obj:`bool`, optional):
+                Save last request to :attr:`HttpClient.last_request` and last response
+                to :attr:`HttpClient.last_response`.
+                If None uses :attr:`tantrum.http_client.HttpClient.save_last`.
+
+                Defaults to: None.
+            save_history (:obj:`bool`, optional):
+                Append last response to :attr:`HttpClient.history`.
+                If None uses :attr:`tantrum.http_client.HttpClient.save_history`.
+
+                Defaults to: None.
+            log_request (:obj:`bool`, optional):
+                Log request details to debug level.
+                If None uses :attr:`tantrum.http_client.HttpClient.log_request`.
+
+                Defaults to: None.
+            log_response (:obj:`bool`, optional):
+                Log response details to debug level.
+                If None uses :attr:`tantrum.http_client.HttpClient.log_response`.
+
+                Defaults to: None.
+            cause (:obj:`str`, optional):
+                String to explain purpose of request.
+
+                Defaults to: "".
             **kwargs:
-                body_re_limit (:obj:`int`):
-                    Value to limit regex search of response body for <session> tag.
-
-                    Defaults to: 4000.
-                empty (:obj:`bool`):
-                    Include attributes that have a value of None when serializing.
-
-                    Defaults to: False
-                list_attrs (:obj:`bool`):
-                    Include simple attributes of :obj:`tantrum.api_models.ApiList`
-                    when serializing.
-
-                    Defaults to: False.
-                exclude_attrs (:obj:`list` of :obj:`str`):
-                    Exclude these attributes when serializing.
-
-                    Defaults to: [].
-                only_attrs (:obj:`list` of :obj:`str`):
-                    Include only these attributes when serializing.
-
-                    Defaults to: [].
-                wrap_name (:obj:`bool`):
-                    Wrap the return in another dict whose key is set to the API name.
-
-                    Defaults to: True.
-                wrap_item_attr (:obj:`bool`):
-                    Wrap list items in dict whose key is set to the API list
-                    item attribute.
-
-                    Defaults to: True.
                 rest of kwargs:
                     Passed to :meth:`build_options_from_kwargs`.
 
@@ -427,36 +481,55 @@ class Soap(Adapter):
             :obj:`tantrum.results.Result`
 
         """
-        limit = kwargs.pop("body_re_limit", 4000)
-        sargs = {
-            "only_attrs": kwargs.pop("only_attrs", []),
-            "exclude_attrs": kwargs.pop("exclude_attrs", []),
-            "empty": kwargs.pop("empty", False),
-            "list_attrs": kwargs.pop("list_attrs", False),
-            "wrap_name": kwargs.pop("wrap_name", True),
-            "wrap_item_attr": kwargs.pop("wrap_item_attr", True),
-        }
+        ser_only_attrs = utils.tools.def_none(ser_only_attrs, [])
+        ser_exclude_attrs = utils.tools.def_none(ser_exclude_attrs, [])
+        ser_empty = utils.tools.def_none(ser_empty, False)
+        ser_list_attrs = utils.tools.def_none(ser_list_attrs, False)
+        ser_wrap_name = utils.tools.def_none(ser_wrap_name, True)
+        ser_wrap_item_attr = utils.tools.def_none(ser_wrap_item_attr, True)
 
-        obj = obj.serialize(**sargs) if isinstance(obj, api_models.ApiModel) else obj
+        if isinstance(obj, api_models.ApiModel):
+            obj = obj.serialize(
+                only_attrs=ser_only_attrs,
+                exclude_attrs=ser_exclude_attrs,
+                empty=ser_empty,
+                list_attrs=ser_list_attrs,
+                wrap_name=ser_wrap_name,
+                wrap_item_attr=ser_wrap_item_attr,
+            )
+
         opts = self.build_options_from_kwargs(**kwargs)
 
         request_dict = soap_envelope(cmd=cmd, obj=obj, opts=opts)
         request_body = serialize_xml(obj=request_dict)
-        response = self.api_client(data=request_body)
+
+        r = self.api_client(
+            data=request_body,
+            verify=verify,
+            log_request=log_request,
+            log_response=log_response,
+            save_last=save_last,
+            save_history=save_history,
+            cause=cause,
+        )
 
         try:
-            auth_token = re_soap_tag(text=response.text, tag="session", limit=limit)
+            auth_token = re_soap_tag(text=r.text, tag="session", limit=body_re_limit)
         except Exception:
             auth_token = ""
 
         if auth_token:
             self.api_client.auth_method.token = auth_token
         else:
+            if body_re_limit:
+                limit = "the first {}".format(body_re_limit)
+            else:
+                limit = "ALL"
             error = "XML tag 'session' not in {limit} characters of SOAP response body"
-            error = error.format(limit="the first {}".format(limit) or "ALL")
+            error = error.format(limit=limit)
             warnings.warn(error, exceptions.SessionNotFoundWarning)
         return self.result_cls.from_response(
-            api_objects=self.api_objects, response=response, lvl=self.log.level
+            api_objects=self.api_objects, response=r, lvl=self.log.level
         )
 
     def cmd_get(self, obj, **kwargs):
@@ -495,7 +568,7 @@ class Soap(Adapter):
         """
         check_object_type(obj=obj, types=(self.api_objects.ApiItem,))
         kwargs["cmd"] = "AddObject"
-        kwargs["exclude_attrs"] = ["id"]
+        kwargs["ser_exclude_attrs"] = ["id"]
         return self.send(obj=obj, **kwargs)
 
     def cmd_delete(self, obj, **kwargs):
@@ -617,10 +690,6 @@ class Soap(Adapter):
             obj (:obj:`tantrum.api_models.ApiModel`):
                 API Object to use for request.
             **kwargs:
-                for_merge (:obj:`bool`):
-                    Value for force_computer_id_flag attr on question object.
-
-                    Defaults to: True.
                 rest of kwargs:
                     Passed to :meth:`send`.
 
@@ -630,7 +699,6 @@ class Soap(Adapter):
         """
         check_object_type(obj=obj, types=(self.api_objects.ParseResultGroup,))
         obj = obj.question
-        obj.force_computer_id_flag = int(kwargs.pop("for_merge", True))
         kwargs["cmd"] = "AddObject"
         return self.send(obj=obj, **kwargs)
 
@@ -657,7 +725,7 @@ class Soap(Adapter):
         check_object_type(obj=obj, types=types)
         check_object_attrs(obj=obj, attrs=["id", "name"])
         kwargs["cmd"] = "GetResultInfo"
-        kwargs["only_attrs"] = ["id", "name"]
+        kwargs["ser_only_attrs"] = ["id", "name"]
         return self.send(obj=obj, **kwargs)
 
     def cmd_get_result_data(self, obj, **kwargs):
@@ -683,7 +751,7 @@ class Soap(Adapter):
         check_object_type(obj=obj, types=types)
         check_object_attrs(obj=obj, attrs=["id", "name"])
         kwargs["cmd"] = "GetResultData"
-        kwargs["only_attrs"] = ["id", "name"]
+        kwargs["ser_only_attrs"] = ["id", "name"]
         return self.send(obj=obj, **kwargs)
 
     def cmd_get_merged_result_data(self, objlist, **kwargs):
@@ -713,7 +781,11 @@ class Soap(Adapter):
 
         objs = {"question": [], "saved_question": []}
         only_attrs = ["id", "name", "index", "cache_row_id"]
-        sargs = {"wrap_name": False, "wrap_item_attr": False, "only_attrs": only_attrs}
+        sargs = {
+            "ser_wrap_name": False,
+            "ser_wrap_item_attr": False,
+            "ser_only_attrs": only_attrs,
+        }
         idx = 0
         for pobj in pobjlist:
             sobjlist = [pobj] if isinstance(pobj, item_types) else pobj
