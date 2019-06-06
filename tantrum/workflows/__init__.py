@@ -82,7 +82,7 @@ class Workflow(object):
         Args:
             adapter (:obj:`tantrum.adapters.Adapter`):
                 Adapter to use for this workflow.
-            obj (:obj:`object`):
+            obj (:obj:`tantrum.api_models.ApiModel`):
                 API Object to use for this workflow.
             lvl (:obj:`str`, optional):
                 Logging level.
@@ -366,128 +366,8 @@ class Question(Workflow):
         result = self.adapter.cmd_get(obj=self.obj)
         self._last_result = result
         self.obj = result()
-        return self
 
-    def answers_info(self):
-        """Return the ResultInfo for this question."""
-        self._check_id()
-        result = self.adapter.cmd_get_result_info(obj=self.obj)
-        info = result()
-        self._last_result = result
-        self._last_info = info
-        return info
-
-    def answers(self):
-        """Return the ResultData for this question.
-
-        Notes:
-            This will not use any paging, which means ALL answers will be returned.
-            For large data sets of answers, this is unwise.
-
-        """
-        self._check_id()
-        result = self.adapter.cmd_get_result_data(obj=self.obj)
-        data = result()
-        self._last_result = result
-        self._last_data = data
-        return data
-
-    def answers_paged(self, size=1):  # float= %, int = #
-        return NotImplementedError
-
-    def answers_sse(self):
-        return NotImplementedError
-
-    def answers_poll(self, sleep=5, pct=99, secs=0, answered=0, passed=0):
-        """Poll for answers for this question.
-
-        Args:
-            sleep (:obj:`int`, optional):
-                Check for answers every N seconds.
-
-                Defaults to: 5.
-            pct (:obj:`int`, optional):
-                Wait until the percentage of clients answered is N percent.
-
-                Defaults to: 99.
-            secs (:obj:`int`, optional):
-                If not 0, wait until N seconds for pct of clients answered instead of
-                until question expiration.
-
-                Defaults to: 0.
-            answered (:obj:`int`, optional):
-                If not 0, wait until N clients have answered instead of
-                ``estimated_total`` of clients from API.
-
-                Defaults to: 0.
-            passed (:obj:`int`, optional):
-                If not 0, wait until N clients have passed the right hand
-                side of the question.
-
-                Defaults to: 0.
-
-        """
-        self._check_id()
-        start = datetime.datetime.utcnow()
-        if secs:
-            stop_dt = start + datetime.timedelta(seconds=secs)
-        else:
-            stop_dt = self.expiration["expiration"]
-
-        m = "Will poll for answers for {o} until {stop_dt}"
-        m = m.format(o=self, stop_dt=stop_dt)
-        self.log.debug(m)
-
-        while True:
-            m = "New polling loop for {o}"
-            m = m.format(o=self)
-            self.log.debug(m)
-
-            infos = self.answers_info()
-
-            m = "Received answers info: {}"
-            m = m.format(infos.serialize())
-            self.log.debug(m)
-
-            info = infos[0]
-
-            # if answered and
-            stop_count = secs or info.estimated_total
-            answers_pct = utils.tools.calc_percent(
-                part=info.mr_passed, whole=stop_count
-            )
-
-            m = (
-                "Answers received {answers_pct} ({info.mr_passed} out of {stop_count}) "
-                "(estimated_total: {info.estimated_total})"
-            )
-            m = m.format(
-                answers_pct=PCT_FMT(answers_pct), info=info, stop_count=stop_count
-            )
-            self.log.debug(m)
-
-            if answers_pct >= pct:
-                m = "Reached {answers_pct} "
-            if datetime.datetime.utcnow() >= stop_dt:
-
-                m = "Reached stop_dt {stop_dt}, considering all answers in"
-                m = m.format(stop_dt=stop_dt)
-                self.log.debug(m)
-
-                return infos
-
-            if self.expiration["expired"]:
-
-                m = "Reached expiration {expiration}, considering all answers in"
-                m = m.format(expiration=self.expiration)
-                self.log.debug(m)
-
-                return infos
-
-            time.sleep(sleep)
-        return NotImplementedError
-
-    def ask(self):
+    def ask(self, **kwargs):
         """Ask the question.
 
         Notes:
@@ -499,11 +379,276 @@ class Question(Workflow):
             wipe_attrs = ["id", "context_group", "management_rights_group"]
             for attr in wipe_attrs:
                 setattr(self.obj, attr, None)
-        result = self.adapter.cmd_add(obj=self.obj)
+        result = self.adapter.cmd_add(obj=self.obj, **kwargs)
         self._last_result = result
         self.obj = result()
         self.refetch()
-        return self
+
+    def answers_get_info(self):
+        """Return the ResultInfo for this question.
+
+        Returns:
+            :obj:`tantrum.api_models.ApiModel`: ResultInfoList API Object
+
+        """
+        self._check_id()
+
+        result = self.adapter.cmd_get_result_info(obj=self.obj)
+        self._last_result = result
+
+        infos = result()
+        self._last_infos = infos
+
+        m = "Received answers info: {infos}"
+        m = m.format(infos=infos.serialize())
+        self.log.debug(m)
+        self.log.debug(format(self))
+        return infos
+
+    def answers_poll(self, sleep=5, pct=99, secs=0, total=0):
+        """Poll for answers from clients for this question.
+
+        Args:
+            sleep (:obj:`int`, optional):
+                Check for answers every N seconds.
+
+                Defaults to: 5.
+            pct (:obj:`int`, optional):
+                Wait until the percentage of clients total is N percent.
+
+                Defaults to: 99.
+            secs (:obj:`int`, optional):
+                If not 0, wait until N seconds for pct of clients total instead of
+                until question expiration.
+
+                Defaults to: 0.
+            total (:obj:`int`, optional):
+                If not 0, wait until N clients have total instead of
+                ``estimated_total`` of clients from API.
+
+                Defaults to: 0.
+
+        Returns:
+            :obj:`object`: ResultInfoList API object
+
+        """
+        self._check_id()
+
+        start = datetime.datetime.utcnow()
+
+        if secs:
+            stop_dt = start + datetime.timedelta(seconds=secs)
+        else:
+            stop_dt = self.expiration["expiration"]
+
+        m = "Start polling loop for answers until for {o} until {stop_dt}"
+        m = m.format(o=self, stop_dt=stop_dt)
+        self.log.debug(m)
+
+        infos = self.answers_get_info()
+        info = infos[0]
+        est_total = info.estimated_total
+        this_total = total if total and total <= est_total else est_total
+        now_pct = utils.tools.calc_percent(part=info.mr_passed, whole=this_total)
+
+        while True:
+            m = "New polling loop for {o}"
+            m = m.format(o=self)
+            self.log.debug(m)
+
+            if now_pct >= pct:
+                m = "Reached {now_pct} out of {pct}, considering all answers in"
+                m = m.format(now_pct=PCT_FMT(now_pct), pct=PCT_FMT(pct))
+                self.log.info(m)
+                break
+
+            if datetime.datetime.utcnow() >= stop_dt:
+                m = "Reached stop_dt {stop_dt}, considering all answers in"
+                m = m.format(stop_dt=stop_dt)
+                self.log.info(m)
+                break
+
+            if self.expiration["expired"]:
+                m = "Reached expiration {expiration}, considering all answers in"
+                m = m.format(expiration=self.expiration)
+                self.log.info(m)
+                break
+
+            time.sleep(sleep)
+
+            infos = self.answers_get_info()
+            info = infos[0]
+            now_pct = utils.tools.calc_percent(part=info.mr_passed, whole=this_total)
+
+            m = [
+                "Answers in {now_pct} out of {pct}",
+                "{info.mr_passed} out of {this_total}",
+                "estimated_total: {info.estimated_total}",
+            ]
+            m = ", ".join(m)
+            m = m.format(
+                now_pct=PCT_FMT(now_pct),
+                pct=PCT_FMT(pct),
+                info=info,
+                this_total=this_total,
+            )
+            self.log.info(m)
+
+        end = datetime.datetime.utcnow()
+        elapsed = end - start
+        m = [
+            "Finished polling in: {dt}",
+            "clients answered: {info.mr_passed}",
+            "estimated clients: {info.estimated_total}",
+            "rows in answers: {info.row_count}",
+        ]
+        m = ", ".join(m)
+        m = m.format(dt=elapsed, info=info)
+        self.log.info(m)
+        return infos
+
+    def answers_get_data(self, include_hashes=False):
+        """Get the answers for this question.
+
+        Args:
+            include_hashes (:obj:`bool`, optional):
+                Have the API include the hashes of rows values
+
+                Defaults to: False.
+
+        Notes:
+            This will not use any paging, which means ALL answers will be returned
+            in one API response. For large data sets of answers, this is unwise.
+
+        Returns:
+            :obj:`tantrum.api_models.ApiModel`: ResultDataList API Object
+
+        """
+        self._check_id()
+
+        start = datetime.datetime.utcnow()
+        result = self.adapter.cmd_get_result_data(
+            obj=self.obj, include_hashes_flag=include_hashes
+        )
+        self._last_result = result
+
+        end = datetime.datetime.utcnow()
+        elapsed = end - start
+
+        m = "Finished getting answers in {dt}"
+        m = m.format(dt=elapsed)
+        self.log.info(m)
+
+        datas = result()
+        self._last_datas = datas
+        return datas
+
+    def answers_get_data_paged(
+        self, size=1000, cache_expiration=900, include_hashes=False
+    ):
+        """Get the answers for this question one page at a time.
+
+        Args:
+            size (:obj:`int`, optional):
+                Size of each page to fetch at a time.
+
+                Defaults to: 1000.
+            cache_expiratio (:obj:`int`, optional):
+                Have the API keep the cache_id that is created on initial get
+                answers page alive for N seconds.
+
+                Defaults to: 900.
+            include_hashes (:obj:`bool`, optional):
+                Have the API include the hashes of rows values
+
+                Defaults to: False.
+
+        Returns:
+            :obj:`tantrum.api_models.ApiModel`: ResultDataList API Object
+
+        """
+        self._check_id()
+
+        start = datetime.datetime.utcnow()
+
+        row_start = 0
+        row_count = size
+
+        result = self.adapter.cmd_get_result_data(
+            obj=self.obj,
+            row_start=row_start,
+            row_count=row_count,
+            cache_expiration=cache_expiration,
+            include_hashes_flag=include_hashes,
+        )
+        self._last_result = result
+
+        datas = result()
+        self._last_datas = datas
+
+        data = datas[0]
+        cache_id = data.cache_id
+        page_count = 1
+        row_start += row_count
+        all_rows = data.rows
+
+        m = "Received initial answers: {rows}"
+        m = m.format(rows=data.rows)
+        self.log.info(m)
+
+        while True:
+            time.sleep(1)
+
+            page_result = self.adapter.cmd_get_result_data(
+                obj=self.obj,
+                row_start=row_start,
+                row_count=row_count,
+                cache_id=cache_id,
+                cache_expiration=cache_expiration,
+                include_hashes_flag=include_hashes,
+            )
+            self._last_result = page_result
+
+            # this should catch errors where API returns result data as None sometimes
+            # need to refetch data for N retries if that happens
+            page_datas = page_result()
+            self._last_datas = page_datas
+
+            page_data = page_datas[0]
+
+            page_rows = page_data.rows
+
+            m = "Received page #{page_count} answers: {rows}"
+            m = m.format(page_count=page_count, rows=len(page_rows or []))
+            self.log.info(m)
+
+            # this is less than ideal, should check page_data.row_count
+            if not page_rows:
+                m = "Received a page with no answers, considering all answers received"
+                self.log.info(m)
+                break
+
+            all_rows += page_rows
+            row_start += row_count
+            page_count += 1
+
+        end = datetime.datetime.utcnow()
+        elapsed = end - start
+
+        m = "Finished getting {rows} answers in {dt}"
+        m = m.format(rows=len(all_rows or []), dt=elapsed)
+        self.log.info(m)
+
+        return datas
+
+    def answers_get_data_sse_xml(self):
+        return NotImplementedError
+
+    def answers_get_data_sse_csv(self):
+        return NotImplementedError
+
+    def answers_get_data_sse_cef(self):
+        return NotImplementedError
 
     def add_left_sensor(
         self, sensor, set_param_defaults=True, allow_empty_params=False
