@@ -345,3 +345,8 @@ def calc_percent_of(percent, whole):
 
     """
     return (percent * whole) / 100.0
+
+
+def def_none(v, d):
+    """Use a default value of ``d`` if ``v`` is None."""
+    return d if v is None else v
