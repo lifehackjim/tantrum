@@ -819,14 +819,17 @@ class RowColumnList(ApiList):
                 error = error.format(item=item, value=value)
                 raise exceptions.ModuleError(error)
 
-            if isinstance(item["v"], (tuple, list)):
+            item_v = item["v"]
+            if isinstance(item_v, (tuple, list)):
                 new_item_value = []
-                for item_value in item["v"]:
-                    if isinstance(item_value, simple_types):
-                        item_value = {"text": item_value, "h": None}
+                for item_value in item_v:
+                    is_simple = isinstance(item_value, simple_types)
+                    is_none = item_value is None
+                    item_value = (
+                        {"text": item_value, "h": None} if is_simple else item_value
+                    )
 
-                    if item_value is None:
-                        item_value = {"text": "", "h": None}
+                    item_value = {"text": "", "h": None} if is_none else item_value
 
                     if not isinstance(item_value, dict):
                         error = "Item value '{item_value}' in {item} is not a dict"
@@ -834,15 +837,14 @@ class RowColumnList(ApiList):
                         raise exceptions.ModuleError(error)
 
                     new_item_value.append(item_value)
-                item["v"] = new_item_value
+                item_v = new_item_value
 
-            if item["v"] is None:
-                item["v"] = [{"text": "", "h": None}]
-
-            if isinstance(item["v"], simple_types):
-                item["v"] = [{"text": item["v"], "h": None}]
-
-            item["v"] = self.api_coerce_list(item["v"])
+            is_none = item_v is None
+            is_simple = isinstance(item_v, simple_types)
+            item_v = [{"text": "", "h": None}] if is_none else item_v
+            item_v = [{"text": item["v"], "h": None}] if is_simple else item_v
+            item_v = self.api_coerce_list(item_v)
+            item["v"] = item_v
             new_value.append(item)
         return new_value
 
