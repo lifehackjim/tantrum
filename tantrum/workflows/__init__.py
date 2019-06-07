@@ -960,14 +960,10 @@ class AnswersMixin(object):
 
         return export_id
 
-    def answers_sse_start_cef(self, hashes=False, leading="", trailing="", **kwargs):
+    def answers_sse_start_cef(self, leading="", trailing="", **kwargs):
         """Start up a server side export for CEF format and get an export_id.
 
         Args:
-            hashes (:obj:`bool`, optional):
-                Have the API include the hashes of rows values
-
-                Defaults to: False.
             leading (:obj:`str`, optional):
                 Prepend this text to each line.
 
@@ -989,7 +985,6 @@ class AnswersMixin(object):
         cmd_args["obj"] = self.obj
         cmd_args["export_flag"] = True
         cmd_args["export_format"] = 2
-        cmd_args["include_hashes_flag"] = hashes
 
         if leading:
             cmd_args["export_leading_text"] = leading
@@ -1292,12 +1287,10 @@ class Question(Workflow, AnswersMixin):
         self._last_result = result
         self.obj = result()
 
-    def ask(self, add_computer_id=True, **kwargs):
+    def ask(self, **kwargs):
         """Ask the question.
 
         Args:
-            add_computer_id (:obj:`bool`):
-                id of question to fetch.
             lvl (:obj:`str`, optional):
                 Logging level.
 
@@ -1367,16 +1360,14 @@ class ParsedQuestion(Workflow, AnswersMixin):
 
     @property
     def get_canonical(self):
+        """Return any parse result that is an exact match."""
         for x in self.obj:
             if x.question.from_canonical_text:
                 return x
         return None
 
     def map_select_params(self, pq):
-        """Duh."""
-        # selects = pq.question.selects or []
-        # selects_with_params = [x for x in selects if x.sensor.parameter_definition]
-        # values = pq.parameter_values or []
+        """Map parameters to sensors on the left hand side of the question."""
         param_cls = self.api_objects.Parameter
         param_values = pq.parameter_values
         selects = pq.question.selects or []
@@ -1415,7 +1406,7 @@ class ParsedQuestion(Workflow, AnswersMixin):
                 self.log.debug(m)
 
     def map_group_params(self, pq, group):
-        """Duh."""
+        """Map parameters to filters on the right hand side of the question."""
         param_cls = self.api_objects.Parameter
         group_sensors = pq.question_group_sensors
         param_values = pq.parameter_values
@@ -1471,35 +1462,48 @@ class ParsedQuestion(Workflow, AnswersMixin):
 
         for sub_group in group.sub_groups or []:
             self.map_group_params(pq, sub_group)
-        # param_cls = self.api_objects.Parameter
-        # for sensor in pq.question_group_sensors or []:
-        #     if not pq.parameter_values:
-        #         return
-        #     if not sensor.parameter_definition:
-        #         continue
-        #     sensor.parameters = self.api_objects.ParameterList()
-        #     params = json.loads(sensor.parameter_definition)["parameters"]
-        #     for param in params:
-        #         if not pq.parameter_values:
-        #             return
-        #         key = "||{}||".format(param["key"])
-        #         value = pq.parameter_values.pop(0)
-        #         sensor.parameters.append(param_cls(key=key, value=value))
 
     @property
     def result_indexes(self):
-        pq_tmpl = [
-            "  index: {i}",
-            "result: {pq.question_text!r}",
-            "params: {pq.parameter_values.LIST}",
-            "exact: {pq.question.from_canonical_text}",
-        ]
-        pq_tmpl = ", ".join(pq_tmpl).format
-        pq_list = [pq_tmpl(i=i, pq=pq) for i, pq in enumerate(self.obj)]
+        """Get the parse result indices in str form."""
+        pq_tmpl = "  index: {idx}, result: {text!r}, params: {params}, exact: {exact}"
+        pq_tmpl = pq_tmpl.format
+
+        pq_list = []
+        for idx, pq in enumerate(self.obj):
+            pq_txt = pq_tmpl(
+                idx=idx,
+                text=pq.question_text,
+                params=list(pq.parameter_values or []),
+                exact=bool(pq.question.from_canonical_text),
+            )
+            pq_list.append(pq_txt)
         return "\n".join(pq_list)
 
-    def pick(self, index=None, use_exact_match=True, use_first=True, **kwargs):
-        """Duh."""
+    def pick(self, index=None, use_exact_match=True, use_first=False, **kwargs):
+        """Pick a parse result and ask it.
+
+        Args:
+            index (:obj:`int`, optional):
+                Index of parse result to ask.
+
+                Defaults to: None.
+            use_exact_match (:obj:`bool`, optional):
+                If index is None and one of the parse results is an exact match,
+                pick and ask it.
+
+                Defaults to: True.
+            use_first (:obj:`bool`, optional):
+                If index is None and there is no exact match,
+                pick the first parse result and ask it.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_add_parsed_question`.
+
+        Returns:
+            :obj:`Question`
+
+        """
         if index:
             pq = self.obj[index]
 
@@ -1567,6 +1571,25 @@ class ParsedQuestion(Workflow, AnswersMixin):
 
     @classmethod
     def parse(cls, adapter, text, lvl="info", **kwargs):
+        """Get parse results of text from API.
+
+        Args:
+            adapter (:obj:`tantrum.adapters.Adapter`):
+                Adapter to use for this workflow.
+            text (:obj:`str`):
+                Question text to parse.
+            lvl (:obj:`str`, optional):
+                Logging level.
+
+                Defaults to: "info".
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_parse_question`.
+
+        Returns:
+            :obj:`ParsedQuestion`
+
+        """
         log = utils.logs.get_obj_log(obj=cls, lvl=lvl)
 
         cmd_args = {}
@@ -1586,10 +1609,6 @@ class ParsedQuestion(Workflow, AnswersMixin):
         log.info(m)
 
         return cls(adapter=adapter, obj=result_obj, lvl=lvl, result=result)
-
-
-# parsed
-# saved
 
 
 OPERATOR_MAP = {

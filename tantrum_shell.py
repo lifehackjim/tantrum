@@ -1,5 +1,7 @@
 #!python -i
 
+# import time
+
 import urllib3
 import tantrum
 import tantrum_creds
@@ -13,7 +15,7 @@ tantrum.utils.logs.add_stderr(lvl="debug")
 
 # setup an HTTP client for communicating with the server
 http_client = tantrum.http_client.HttpClient(
-    url=tantrum_creds.url, verify=False, lvl="debug"
+    url=tantrum_creds.url, verify=False, lvl="info"
 )
 
 # setup an authentication method that uses an http client to send auth requests
@@ -21,12 +23,12 @@ auth_method = tantrum.auth_methods.Credentials(
     http_client=http_client,
     username=tantrum_creds.username,
     password=tantrum_creds.password,
-    lvl="debug",
+    lvl="info",
 )
 
 # setup an API client that uses an http client to send API requests
 api_client = tantrum.api_clients.Soap(
-    http_client=http_client, auth_method=auth_method, lvl="debug"
+    http_client=http_client, auth_method=auth_method, lvl="info"
 )
 
 # setup an API objects layer
