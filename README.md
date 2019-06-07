@@ -20,4 +20,4 @@ Installing tantrum via [pip](https://pypi.org/project/pip/) or [pipenv](https://
 
 ## Examples
 
-These [examples](https://github.com/lifehackjim/tantrum/examples) are fairly basic and not intended to be full show & tells. More detailed examples will be added over time.
+These [examples](examples/) are fairly basic and not intended to be full show & tells. More detailed examples will be added over time.
