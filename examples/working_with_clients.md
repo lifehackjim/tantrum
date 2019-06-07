@@ -2,11 +2,7 @@
 
 Clients is the same as the Administration -> System Status page from the GUI.
 
-For all of these examples, load up tantrum_shell:
-
-```
-pipenv run python3 -i tantrum_shell.py
-```
+For all of these examples, load up [tantrum_shell](connection_basics.md).
 
 ## Get all clients with no paging and no filters
 

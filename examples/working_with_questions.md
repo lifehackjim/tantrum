@@ -2,6 +2,8 @@
 
 You can use the Question workflow to manually build a fairly limited question right now. It only supports adding sensors to the left hand side of the question. The right hand side will come later.
 
+For all of these examples, load up [tantrum_shell](connection_basics.md).
+
 ## create a new question workflow
 
 ```

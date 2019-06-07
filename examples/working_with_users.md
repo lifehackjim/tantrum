@@ -1,13 +1,8 @@
-
 # Fun with users
 
 There are no workflows for working with users as of yet, but you can use the low-level API objects with the adapter directly to do anything you would want to do.
 
-For all of these examples, load up tantrum_shell:
-
-```
-pipenv run python3 -i tantrum_shell.py
-```
+For all of these examples, load up [tantrum_shell](connection_basics.md).
 
 ## Getting a user by name
 

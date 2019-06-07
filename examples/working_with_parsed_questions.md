@@ -4,6 +4,8 @@ You can ask the API to parse some text into a question using the ParsedQuestion 
 
 For the most part, if you use question text produced by the question parser or builder in the GUI, it will be an exact match to a parser result. This workflow will automatically use that result if no specific index is provided.
 
+For all of these examples, load up [tantrum_shell](connection_basics.md).
+
 ## Simple query
 
 ```
