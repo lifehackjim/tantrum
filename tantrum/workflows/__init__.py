@@ -592,6 +592,7 @@ class AnswersMixin(object):
             :obj:`object`: ResultInfoList API object
 
         """
+        # TODO: Add wait till error_count / no_results_count == 0
         self._check_id()
 
         cmd_args = {}
