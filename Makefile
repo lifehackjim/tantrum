@@ -68,4 +68,4 @@ git_tag:
 publish:
 	$(MAKE) build
 	$(MAKE) git_check
-	pipenv run python setup.py upload
+	pipenv run twine upload dist/*
