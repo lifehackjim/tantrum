@@ -516,7 +516,155 @@ class Sensor(Workflow):
         return select
 
 
-class AnswersMixin(object):
+class Question(Workflow):
+    def __str__(self):
+        """Show object info.
+
+        Returns:
+            (:obj:`str`)
+
+        """
+        ctmpl = "{c.__module__}.{c.__name__}".format
+        atmpl = "{k}='{v}'".format
+        attrs = ["id", "query_text"]
+        bits = [atmpl(k=attr, v=getattr(self.obj, attr, None)) for attr in attrs]
+        bits += [atmpl(k=k, v=v) for k, v in self.expiration.items()]
+        bits = "(\n  {},\n)".format(",\n  ".join(bits))
+        cls = ctmpl(c=self.__class__)
+        return "{cls}{bits}".format(cls=cls, bits=bits)
+
+    @classmethod
+    def new(cls, adapter, lvl="info"):
+        """Create a new Question workflow.
+
+        Args:
+            adapter (:obj:`tantrum.adapters.Adapter`):
+                Adapter to use for this workflow.
+            lvl (:obj:`str`, optional):
+                Logging level.
+
+                Defaults to: "info".
+
+        Returns:
+            :obj:`Question`
+
+        """
+        return cls(obj=adapter.api_objects.Question(), adapter=adapter, lvl=lvl)
+
+    @classmethod
+    def get_by_id(cls, adapter, id, lvl="info"):
+        """Get a question object by id.
+
+        Args:
+            adapter (:obj:`tantrum.adapters.Adapter`):
+                Adapter to use for this workflow.
+            id (:obj:`int`):
+                id of question to fetch.
+            lvl (:obj:`str`, optional):
+                Logging level.
+
+                Defaults to: "info".
+
+        Returns:
+            :obj:`Question`
+
+        """
+        result = adapter.cmd_get(obj=adapter.api_objects.Question(id=id))
+        return cls(adapter=adapter, obj=result(), lvl=lvl, result=result)
+
+    def _check_id(self):
+        """Check that question has been asked by seeing if self.obj.id is set."""
+        if not self.obj.id:
+            m = "No id issued yet, ask the question!"
+            raise exceptions.ModuleError(m)
+
+    @property
+    def expiration(self):
+        """Get expiration details for this question.
+
+        Returns:
+            :obj:`dict`
+
+        """
+        now_dt = datetime.datetime.utcnow()
+        now_td = datetime.timedelta()
+        ret = {
+            "expiration": now_dt,
+            "expire_in": now_td,
+            "expire_ago": now_td,
+            "expired": True,
+        }
+        if self.obj.expiration:
+            ex_dt = self.api_objects.module_dt_format(self.obj.expiration)
+            is_ex = now_dt >= ex_dt
+            ret["expiration"] = ex_dt
+            ret["expired"] = is_ex
+            if is_ex:
+                ret["expire_ago"] = now_dt - ex_dt
+            else:
+                ret["expire_in"] = ex_dt - now_dt
+        return ret
+
+    def refetch(self):
+        """Re-fetch this question."""
+        self._check_id()
+        result = self.adapter.cmd_get(obj=self.obj)
+        self._last_result = result
+        self.obj = result()
+
+    def ask(self, **kwargs):
+        """Ask the question.
+
+        Args:
+            lvl (:obj:`str`, optional):
+                Logging level.
+
+                Defaults to: "info".
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`tantrum.adapter.Adapter.cmd_add`.
+
+        Notes:
+            If question has already been asked (id is set), we wipe out attrs:
+            ["id", "context_group", "management_rights_group"], then add it.
+
+        """
+        if self.obj.id:
+            wipe_attrs = ["id", "context_group", "management_rights_group"]
+            for attr in wipe_attrs:
+                setattr(self.obj, attr, None)
+        result = self.adapter.cmd_add(obj=self.obj, **kwargs)
+        self._last_result = result
+        self.obj = result()
+        self.refetch()
+
+    def add_left_sensor(
+        self, sensor, set_param_defaults=True, allow_empty_params=False
+    ):
+        """Add a sensor to the left hand side of the question.
+
+        Args:
+            sensor (:obj:`Sensor`):
+                Sensor workflow object.
+            set_param_defaults (:obj:`bool`, optional):
+                If sensor has parameters defined, and no value is set,
+                try to derive the default value from each parameters definition.
+
+                Defaults to: True.
+            allow_empty_params (:obj:`bool`, optional):
+                If sensor has parameters defined, and the value is not set, "", or None,
+                throw an exception.
+
+                Defaults to: True.
+
+        """
+        select = sensor.build_select(
+            set_param_defaults=set_param_defaults, allow_empty_params=allow_empty_params
+        )
+        if not getattr(self.obj, "selects", None):
+            self.obj.selects = self.api_objects.SelectList()
+        self.obj.selects.append(select)
+
     def answers_get_info(self, **kwargs):
         """Return the ResultInfo for this question.
 
@@ -1192,157 +1340,7 @@ class AnswersMixin(object):
         return data
 
 
-class Question(Workflow, AnswersMixin):
-    def __str__(self):
-        """Show object info.
-
-        Returns:
-            (:obj:`str`)
-
-        """
-        ctmpl = "{c.__module__}.{c.__name__}".format
-        atmpl = "{k}='{v}'".format
-        attrs = ["id", "query_text"]
-        bits = [atmpl(k=attr, v=getattr(self.obj, attr, None)) for attr in attrs]
-        bits += [atmpl(k=k, v=v) for k, v in self.expiration.items()]
-        bits = "(\n  {},\n)".format(",\n  ".join(bits))
-        cls = ctmpl(c=self.__class__)
-        return "{cls}{bits}".format(cls=cls, bits=bits)
-
-    @classmethod
-    def new(cls, adapter, lvl="info"):
-        """Create a new Question workflow.
-
-        Args:
-            adapter (:obj:`tantrum.adapters.Adapter`):
-                Adapter to use for this workflow.
-            lvl (:obj:`str`, optional):
-                Logging level.
-
-                Defaults to: "info".
-
-        Returns:
-            :obj:`Question`
-
-        """
-        return cls(obj=adapter.api_objects.Question(), adapter=adapter, lvl=lvl)
-
-    @classmethod
-    def get_by_id(cls, adapter, id, lvl="info"):
-        """Get a question object by id.
-
-        Args:
-            adapter (:obj:`tantrum.adapters.Adapter`):
-                Adapter to use for this workflow.
-            id (:obj:`int`):
-                id of question to fetch.
-            lvl (:obj:`str`, optional):
-                Logging level.
-
-                Defaults to: "info".
-
-        Returns:
-            :obj:`Question`
-
-        """
-        result = adapter.cmd_get(obj=adapter.api_objects.Question(id=id))
-        return cls(adapter=adapter, obj=result(), lvl=lvl, result=result)
-
-    def _check_id(self):
-        """Check that question has been asked by seeing if self.obj.id is set."""
-        if not self.obj.id:
-            m = "No id issued yet, ask the question!"
-            raise exceptions.ModuleError(m)
-
-    @property
-    def expiration(self):
-        """Get expiration details for this question.
-
-        Returns:
-            :obj:`dict`
-
-        """
-        now_dt = datetime.datetime.utcnow()
-        now_td = datetime.timedelta()
-        ret = {
-            "expiration": now_dt,
-            "expire_in": now_td,
-            "expire_ago": now_td,
-            "expired": True,
-        }
-        if self.obj.expiration:
-            ex_dt = self.api_objects.module_dt_format(self.obj.expiration)
-            is_ex = now_dt >= ex_dt
-            ret["expiration"] = ex_dt
-            ret["expired"] = is_ex
-            if is_ex:
-                ret["expire_ago"] = now_dt - ex_dt
-            else:
-                ret["expire_in"] = ex_dt - now_dt
-        return ret
-
-    def refetch(self):
-        """Re-fetch this question."""
-        self._check_id()
-        result = self.adapter.cmd_get(obj=self.obj)
-        self._last_result = result
-        self.obj = result()
-
-    def ask(self, **kwargs):
-        """Ask the question.
-
-        Args:
-            lvl (:obj:`str`, optional):
-                Logging level.
-
-                Defaults to: "info".
-            **kwargs:
-                rest of kwargs:
-                    Passed to :meth:`tantrum.adapter.Adapter.cmd_add`.
-
-        Notes:
-            If question has already been asked (id is set), we wipe out attrs:
-            ["id", "context_group", "management_rights_group"], then add it.
-
-        """
-        if self.obj.id:
-            wipe_attrs = ["id", "context_group", "management_rights_group"]
-            for attr in wipe_attrs:
-                setattr(self.obj, attr, None)
-        result = self.adapter.cmd_add(obj=self.obj, **kwargs)
-        self._last_result = result
-        self.obj = result()
-        self.refetch()
-
-    def add_left_sensor(
-        self, sensor, set_param_defaults=True, allow_empty_params=False
-    ):
-        """Add a sensor to the left hand side of the question.
-
-        Args:
-            sensor (:obj:`Sensor`):
-                Sensor workflow object.
-            set_param_defaults (:obj:`bool`, optional):
-                If sensor has parameters defined, and no value is set,
-                try to derive the default value from each parameters definition.
-
-                Defaults to: True.
-            allow_empty_params (:obj:`bool`, optional):
-                If sensor has parameters defined, and the value is not set, "", or None,
-                throw an exception.
-
-                Defaults to: True.
-
-        """
-        select = sensor.build_select(
-            set_param_defaults=set_param_defaults, allow_empty_params=allow_empty_params
-        )
-        if not getattr(self.obj, "selects", None):
-            self.obj.selects = self.api_objects.SelectList()
-        self.obj.selects.append(select)
-
-
-class ParsedQuestion(Workflow, AnswersMixin):
+class ParsedQuestion(Workflow):
     def __str__(self):
         """Show object info.
 
