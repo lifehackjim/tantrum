@@ -8,13 +8,13 @@ from __future__ import unicode_literals
 from .. import exceptions
 
 
-class ModuleError(exceptions.TantrumError):
+class ModuleError(exceptions.PackageError):
     """Parent of all exceptions for :mod:`tantrum.http_client`."""
 
     pass
 
 
-class ModuleWarning(exceptions.TantrumWarning):
+class ModuleWarning(exceptions.PackageWarning):
     """Parent of all warnings for :mod:`tantrum.http_client`."""
 
     pass

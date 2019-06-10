@@ -142,9 +142,9 @@ def b64_encode(s):
 
     """
     s = format("" if s is None else s) if not isinstance(s, six.string_types) else s
-    s = six.ensure_binary(s)
+    s = ensure_binary(s)
     s = base64.b64encode(s)
-    return six.ensure_str(s)
+    return ensure_str(s)
 
 
 def b64_decode(s):
@@ -158,9 +158,9 @@ def b64_decode(s):
         :obj:`str`
 
     """
-    s = six.ensure_binary(s)
+    s = ensure_binary(s)
     s = base64.b64decode(s)
-    return six.ensure_str(s)
+    return ensure_str(s)
 
 
 def trim_txt(txt, limit=10000):
@@ -350,3 +350,44 @@ def calc_percent_of(percent, whole):
 def def_none(v, d):
     """Use a default value of ``d`` if ``v`` is None."""
     return d if v is None else v
+
+
+# ripped from six 1.12.0 to allow six 1.11.0 to work
+def ensure_str(s, encoding="utf-8", errors="strict"):
+    """Coerce *s* to `str`.
+
+    For Python 2:
+      - `unicode` -> encoded to `str`
+      - `str` -> `str`
+
+    For Python 3:
+      - `str` -> `str`
+      - `bytes` -> decoded to `str`
+    """
+    if not isinstance(s, (six.text_type, six.binary_type)):
+        raise TypeError("not expecting type '%s'" % type(s))
+    if six.PY2 and isinstance(s, six.text_type):
+        s = s.encode(encoding, errors)
+    elif six.PY3 and isinstance(s, six.binary_type):
+        s = s.decode(encoding, errors)
+    return s
+
+
+# ripped from six 1.12.0 to allow six 1.11.0 to work
+def ensure_binary(s, encoding="utf-8", errors="strict"):
+    """Coerce **s** to six.binary_type.
+
+    For Python 2:
+      - `unicode` -> encoded to `str`
+      - `str` -> `str`
+
+    For Python 3:
+      - `str` -> encoded to `bytes`
+      - `bytes` -> `bytes`
+    """
+    if isinstance(s, six.text_type):
+        return s.encode(encoding, errors)
+    elif isinstance(s, six.binary_type):
+        return s
+    else:
+        raise TypeError("not expecting type '%s'" % type(s))

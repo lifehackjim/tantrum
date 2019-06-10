@@ -9,13 +9,13 @@ from .. import exceptions
 from .. import utils
 
 
-class ModuleError(exceptions.TantrumError):
+class ModuleError(exceptions.PackageError):
     """Parent of all exceptions for :mod:`tantrum.results`."""
 
     pass
 
 
-class ModuleWarning(exceptions.TantrumWarning):
+class ModuleWarning(exceptions.PackageWarning):
     """Parent of all warnings for :mod:`tantrum.results`."""
 
     pass

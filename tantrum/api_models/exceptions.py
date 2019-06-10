@@ -10,13 +10,13 @@ import pprint
 from .. import exceptions
 
 
-class ModuleError(exceptions.TantrumError):
+class ModuleError(exceptions.PackageError):
     """Parent of all exceptions for :mod:`tantrum.api_models`."""
 
     pass
 
 
-class ModuleWarning(exceptions.TantrumWarning):
+class ModuleWarning(exceptions.PackageWarning):
     """Parent of all warnings for :mod:`tantrum.api_models`."""
 
     pass

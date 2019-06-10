@@ -6,13 +6,13 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 
-class TantrumError(Exception):
+class PackageError(Exception):
     """Parent exception for all :mod:`tantrum` errors."""
 
     pass
 
 
-class TantrumWarning(Warning):
+class PackageWarning(Warning):
     """Parent warning for all :mod:`tantrum` warnings."""
 
     pass
