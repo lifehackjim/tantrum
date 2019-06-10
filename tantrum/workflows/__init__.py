@@ -122,7 +122,7 @@ class Clients(Workflow):
         return filters
 
     @classmethod
-    def get_all(
+    def get_all_iter(
         cls,
         adapter,
         filters=None,
@@ -130,11 +130,11 @@ class Clients(Workflow):
         page_size=1000,
         max_page_count=0,
         cache_expiration=600,
-        sleep=5,
+        sleep=2,
         lvl="info",
         **kwargs
     ):
-        """Get all Clients.
+        """Get all Clients as an iterator.
 
         Args:
             adapter (:obj:`tantrum.adapters.Adapter`):
@@ -165,7 +165,7 @@ class Clients(Workflow):
             sleep (:obj:`int`, optional):
                 Wait N seconds between fetching each page.
 
-                Defaults to: 5.
+                Defaults to: 2.
             lvl (:obj:`str`, optional):
                 Logging level.
 
@@ -174,8 +174,8 @@ class Clients(Workflow):
                 rest of kwargs:
                     Passed to :meth:`tantrum.adapter.Adapter.cmd_get`.
 
-        Returns:
-            :obj:`Clients`
+        Yields:
+            :obj:`tantrum.api_objects.ApiObjects`: ClientStatus API object
 
         """
         log = utils.logs.get_obj_log(obj=cls, lvl=lvl)
@@ -198,22 +198,24 @@ class Clients(Workflow):
 
         result = adapter.cmd_get(**get_args)
 
-        log.debug(result.pretty_bodies())
-
         result_obj = result()
 
-        m = "Received initial {o!r} length={len}, cache_info={cache!r}"
-        m = m.format(
-            o=result_obj.__class__.__name__,
-            len=len(result_obj),
-            cache=getattr(result_obj, "cache_info", None),
-        )
+        received_rows = len(result_obj)
+        result_cache = getattr(result_obj, "cache_info", None)
+        total_rows = getattr(result_cache, "filtered_row_count", 0)
+        cache_id = getattr(result_cache, "cache_id", None)
+        get_args["cache_id"] = cache_id
+        page_count = 1
+
+        m = "Received initial page length={len}, cache_info={cache!r}"
+        m = m.format(len=received_rows, cache=result_cache)
         log.info(m)
 
+        for obj in result_obj:
+            yield obj
+
         if page_size:
-            total_rows = result_obj.cache_info.filtered_row_count
             paging_get_args = {k: v for k, v in get_args.items()}
-            page_count = 1
 
             while True:
 
@@ -223,7 +225,7 @@ class Clients(Workflow):
                     log.info(m)
                     break
 
-                if len(result_obj) >= total_rows:
+                if received_rows >= total_rows:
                     m = "Reached total rows count {c}, considering all clients fetched"
                     m = m.format(c=total_rows)
                     log.info(m)
@@ -234,33 +236,52 @@ class Clients(Workflow):
 
                 paging_get_args["row_start"] = row_start
 
-                result = adapter.cmd_get(**paging_get_args)
+                paging_result = adapter.cmd_get(**paging_get_args)
 
                 log.debug(result.pretty_bodies())
 
-                paging_result_obj = result()
+                paging_result_obj = paging_result()
+                page_rows = len(paging_result_obj)
+                received_rows += page_rows
 
-                m = "Received page of {o!r} length={len}, cache_info={cache!r}"
+                m = [
+                    "Received page_rows={page_rows}",
+                    "received_rows={received_rows}",
+                    "total_rows={total_rows}",
+                ]
+                m = ", ".join(m)
                 m = m.format(
-                    o=paging_result_obj.__class__.__name__,
-                    len=len(paging_result_obj),
-                    cache=getattr(paging_result_obj, "cache_info", None),
+                    page_rows=page_rows,
+                    received_rows=received_rows,
+                    total_rows=total_rows,
                 )
                 log.info(m)
 
-                result_obj += paging_result_obj
-
-                m = "{o!r} received so far {len} out of total {total}"
-                m = m.format(
-                    o=result_obj.__class__.__name__,
-                    len=len(result_obj),
-                    total=total_rows,
-                )
-                log.info(m)
+                for obj in paging_result_obj:
+                    yield obj
 
                 time.sleep(sleep)
 
-            return cls(adapter=adapter, obj=result_obj, lvl=lvl, result=result)
+    @classmethod
+    def get_all(cls, adapter, **kwargs):
+        """Get all Clients.
+
+        Args:
+            adapter (:obj:`tantrum.adapters.Adapter`):
+                Adapter to use for this workflow.
+            **kwargs:
+                rest of kwargs:
+                    Passed to :meth:`Clients.get_all_iter`.
+
+        Returns:
+            :obj:`tantrum.api_objects.ApiObjects`: SystemStatusList API object
+
+        """
+        obj = adapter.api_objects.SystemStatusList()
+
+        for client_obj in cls.get_all_iter(adapter=adapter, **kwargs):
+            obj.append(client_obj)
+        return obj
 
 
 class Sensor(Workflow):
