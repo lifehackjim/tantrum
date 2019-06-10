@@ -39,7 +39,7 @@ setup(
     scripts=[],  # TODO(!)
     include_package_data=True,
     python_requires=">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*",
-    install_requires=["requests[security,socks]", "six>=1.12.0", "xmltodict"],
+    install_requires=["requests[security,socks]", "six", "xmltodict"],
     tests_require=[],
     license=about["__license__"],
     classifiers=[
