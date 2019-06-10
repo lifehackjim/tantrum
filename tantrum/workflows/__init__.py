@@ -127,8 +127,10 @@ class Clients(Workflow):
         adapter,
         filters=None,
         sort_fields="last_registration",
-        paging=1000,
+        page_size=1000,
+        max_page_count=0,
         cache_expiration=600,
+        sleep=5,
         lvl="info",
         **kwargs
     ):
@@ -146,16 +148,24 @@ class Clients(Workflow):
                 Attribute of a ClientStatus object to have API sort the return on.
 
                 Defaults to: "last_registration".
-            paging (:obj:`int`, optional):
+            page_size (:obj:`int`, optional):
                 Get N number of clients at a time from the API.
-                If set to 0, disables paging and gets all clients in one call.
+                If 0, disables paging and gets all clients in one call.
 
                 Defaults to: 1000.
+            max_page_count (:obj:`int`, optional):
+                Only fetch up to this many pages. If 0, get all pages.
+
+                Defaults to: 0.
             cache_expiration (:obj:`int`, optional):
-                When paging is not 0, have the API keep the cache of clients
+                When page_size is not 0, have the API keep the cache of clients
                 for this many seconds before expiring the cache.
 
                 Defaults to: 600.
+            sleep (:obj:`int`, optional):
+                Wait N seconds between fetching each page.
+
+                Defaults to: 5.
             lvl (:obj:`str`, optional):
                 Logging level.
 
@@ -176,12 +186,12 @@ class Clients(Workflow):
         get_args["obj"] = adapter.api_objects.ClientStatus()
 
         row_start = 0
-        row_count = paging
+        row_count = page_size
 
         if filters is not None:
             get_args["cache_filters"] = filters
 
-        if paging:
+        if page_size:
             get_args["row_start"] = row_start
             get_args["row_count"] = row_count
             get_args["cache_expiration"] = cache_expiration
@@ -200,13 +210,18 @@ class Clients(Workflow):
         )
         log.info(m)
 
-        if paging:
+        if page_size:
             total_rows = result_obj.cache_info.filtered_row_count
             paging_get_args = {k: v for k, v in get_args.items()}
+            page_count = 1
 
-            while len(result_obj) < total_rows:
+            while True:
+                time.sleep(sleep)
+                page_count += 1
                 row_start += row_count
+
                 paging_get_args["row_start"] = row_start
+
                 result = adapter.cmd_get(**paging_get_args)
 
                 log.debug(result.pretty_bodies())
@@ -231,7 +246,19 @@ class Clients(Workflow):
                 )
                 log.info(m)
 
-        return cls(adapter=adapter, obj=result_obj, lvl=lvl, result=result)
+                if max_page_count and page_count >= max_page_count:
+                    m = "Reached max page count {c}, considering all clients fetched"
+                    m = m.format(c=max_page_count)
+                    log.info(m)
+                    break
+
+                if len(result_obj) >= total_rows:
+                    m = "Reached total rows count {c}, considering all clients fetched"
+                    m = m.format(c=total_rows)
+                    log.info(m)
+                    break
+
+            return cls(adapter=adapter, obj=result_obj, lvl=lvl, result=result)
 
 
 class Sensor(Workflow):
@@ -899,7 +926,7 @@ class Question(Workflow):
 
                 Defaults to: 1000.
             max_page_count (:obj:`int`, optional):
-                Only fetch up to this many pages.
+                Only fetch up to this many pages. If 0, get all pages.
 
                 Defaults to: 0.
             max_row_count (:obj:`int`, optional):
@@ -915,6 +942,10 @@ class Question(Workflow):
                 Have the API include the hashes of rows values
 
                 Defaults to: False.
+            sleep (:obj:`int`, optional):
+                Wait N seconds between fetching each page.
+
+                Defaults to: 5.
             **kwargs:
                 rest of kwargs:
                     Passed to :meth:`tantrum.adapter.Adapter.cmd_get_result_data`.
@@ -967,6 +998,7 @@ class Question(Workflow):
 
         while True:
             time.sleep(sleep)
+            page_count += 1
 
             page_result = self.adapter.cmd_get_result_data(**cmd_args)
             self._last_result = page_result
@@ -982,6 +1014,9 @@ class Question(Workflow):
             m = "Received page #{c} answers: {rows}"
             m = m.format(c=page_count, rows=len(page_rows or []))
             self.log.info(m)
+
+            all_rows += page_rows
+            cmd_args["row_start"] += page_size
 
             if len(all_rows or []) >= data.row_count:
                 m = "Received expected row_count {c}, considering all answers received"
@@ -999,10 +1034,6 @@ class Question(Workflow):
                 m = m.format(c=max_page_count)
                 self.log.info(m)
                 break
-
-            all_rows += page_rows
-            page_count += 1
-            cmd_args["row_start"] += page_size
 
             if max_row_count and len(all_rows or []) >= max_row_count:
                 m = "Hit max pages of {max_row_count}, considering all answers received"
