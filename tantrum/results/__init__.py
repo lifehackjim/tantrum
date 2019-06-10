@@ -517,6 +517,8 @@ class Soap(Result):
             [r"NotUnique", exceptions.ObjectExistsError],
             [r"400.*not.*found", exceptions.ObjectNotFoundError],
             [r"404.*not.*found", exceptions.ObjectNotFoundError],
+            [r"RBACInsufficientPrivilege", exceptions.InsufficientRBACPrivileges],
+            [r"403.*", exceptions.InsufficientPrivileges],
         ]
         return ret
 

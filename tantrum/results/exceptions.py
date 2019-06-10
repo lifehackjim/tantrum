@@ -42,16 +42,16 @@ class ResponseError(ModuleError):
         )
         """:obj:`str`: Trimmed response body."""
 
-        error = [
+        error_full = [
             "",
             "-- From: {o}".format(o=result),
             "-- Request body:\n{o}".format(o=result.request_body_str),
             "-- Response body:\n{o}".format(o=self.response_body),
             "-- Error: {o}".format(o=error),
         ]
-        self.error = "\n".join(error)
+        self.error_full = "\n".join(error_full)
         """:obj:`str`: Error message that was thrown."""
-        super(ResponseError, self).__init__(self.error)
+        super(ResponseError, self).__init__(self.error_full)
 
 
 class ObjectExistsError(ResponseError):
@@ -61,7 +61,19 @@ class ObjectExistsError(ResponseError):
 
 
 class ObjectNotFoundError(ResponseError):
-    """Thrown when a response tells us the object already exists."""
+    """Thrown when a response tells us the object does not exist."""
+
+    pass
+
+
+class InsufficientPrivileges(ResponseError):
+    """Thrown when a response tells us insufficient privileges."""
+
+    pass
+
+
+class InsufficientRBACPrivileges(InsufficientPrivileges):
+    """Thrown when a response tells us insufficient RBAC privileges."""
 
     pass
 
