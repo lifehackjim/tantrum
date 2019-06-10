@@ -216,7 +216,19 @@ class Clients(Workflow):
             page_count = 1
 
             while True:
-                time.sleep(sleep)
+
+                if max_page_count and page_count >= max_page_count:
+                    m = "Reached max page count {c}, considering all clients fetched"
+                    m = m.format(c=max_page_count)
+                    log.info(m)
+                    break
+
+                if len(result_obj) >= total_rows:
+                    m = "Reached total rows count {c}, considering all clients fetched"
+                    m = m.format(c=total_rows)
+                    log.info(m)
+                    break
+
                 page_count += 1
                 row_start += row_count
 
@@ -246,17 +258,7 @@ class Clients(Workflow):
                 )
                 log.info(m)
 
-                if max_page_count and page_count >= max_page_count:
-                    m = "Reached max page count {c}, considering all clients fetched"
-                    m = m.format(c=max_page_count)
-                    log.info(m)
-                    break
-
-                if len(result_obj) >= total_rows:
-                    m = "Reached total rows count {c}, considering all clients fetched"
-                    m = m.format(c=total_rows)
-                    log.info(m)
-                    break
+                time.sleep(sleep)
 
             return cls(adapter=adapter, obj=result_obj, lvl=lvl, result=result)
 
@@ -826,8 +828,6 @@ class Question(Workflow):
                 self.log.info(m)
                 break
 
-            time.sleep(poll_sleep)
-
             infos = self.answers_get_info(**kwargs)
             info = infos[0]
 
@@ -848,6 +848,8 @@ class Question(Workflow):
                 c=poll_count,
             )
             self.log.info(m)
+
+            time.sleep(poll_sleep)
 
         end = datetime.datetime.utcnow()
         elapsed = end - start
@@ -995,28 +997,9 @@ class Question(Workflow):
 
         all_rows = data.rows
         page_count = 1
+        page_rows = all_rows
 
         while True:
-            time.sleep(sleep)
-            page_count += 1
-
-            page_result = self.adapter.cmd_get_result_data(**cmd_args)
-            self._last_result = page_result
-
-            # this should catch errors where API returns result data as None sometimes
-            # need to refetch data for N retries if that happens
-            page_datas = page_result()
-            self._last_datas = page_datas
-
-            page_data = page_datas[0]
-            page_rows = page_data.rows
-
-            m = "Received page #{c} answers: {rows}"
-            m = m.format(c=page_count, rows=len(page_rows or []))
-            self.log.info(m)
-
-            all_rows += page_rows
-            cmd_args["row_start"] += page_size
 
             if len(all_rows or []) >= data.row_count:
                 m = "Received expected row_count {c}, considering all answers received"
@@ -1039,6 +1022,28 @@ class Question(Workflow):
                 m = "Hit max pages of {max_row_count}, considering all answers received"
                 m = m.format(max_row_count=max_row_count)
                 self.log.info(m)
+
+            page_count += 1
+
+            page_result = self.adapter.cmd_get_result_data(**cmd_args)
+            self._last_result = page_result
+
+            # this should catch errors where API returns result data as None sometimes
+            # need to refetch data for N retries if that happens
+            page_datas = page_result()
+            self._last_datas = page_datas
+
+            page_data = page_datas[0]
+            page_rows = page_data.rows
+
+            m = "Received page #{c} answers: {rows}"
+            m = m.format(c=page_count, rows=len(page_rows or []))
+            self.log.info(m)
+
+            all_rows += page_rows
+            cmd_args["row_start"] += page_size
+
+            time.sleep(sleep)
 
         end = datetime.datetime.utcnow()
         elapsed = end - start
